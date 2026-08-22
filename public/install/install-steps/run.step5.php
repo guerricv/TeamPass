@@ -790,7 +790,15 @@ class DatabaseInstaller
             // Kill switch of the emails customization layer. Set to 0 to ignore
             // every stored template without deleting them.
             array('admin', 'emails_templates_enabled', '1'),
-            array('admin', 'offline_sync_window_days', '90')
+            array('admin', 'offline_sync_window_days', '90'),
+            // Self-service licence trial. All three are caches or local state; the licence
+            // server remains the authority on what was really granted.
+            array('admin', 'licence_trial_state', ''),
+            array('admin', 'licence_server_discovery', ''),
+            array('admin', 'licence_info_budget', ''),
+            // Staging escape hatch, not exposed in the interface. Empty means the production
+            // licence server.
+            array('admin', 'licence_server_base_url', '')
         );
         foreach ($aMiscVal as $elem) {
             $value = isset($elem[3]) ? $elem[3] : 0;

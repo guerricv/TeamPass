@@ -233,6 +233,25 @@ Agentless SSH rotation of local Linux account passwords (release 3.2.2, feature 
 
 **Rule: all SSH work runs in background traits** — never in a `*.queries.php` request thread. **Rule: never log a secret** — `laprAuditLog()`/`action_details` are whitelisted, never a password. **Rule: read a credential/item as the server via `laprReadItemPasswordAsTpUser()`** (TP_USER chain, migration-aware) — non-personal items only. **Rule: write a rotated item password by mirroring `laprUpdateItemPassword()`** (pw_iv + sharekey fan-out via `apiUserId=TP_USER_ID` + history `old_value` + `emitItemEvent`). **Rule: gate every operational handler with `laprCheckPermission()`** (`lapr_enabled` + **non-admin** + `can_manage_lapr`) — TeamPass administrators configure LAPR through `admin_lapr` only; the operational pages depend on item access, which admins do not have, so `laprUserCanWriteFolder()`/`laprUserCanReadFolder()` reject them too. **Rule: read LAPR item roles through `laprGetItemRelations($itemIds, $SETTINGS)`** — it is module-aware (returns `[]` when `lapr_enabled != 1`), so disabling LAPR never leaves items frozen; the delete/move guards (`laprItemsDeletionBlocker()`, `laprItemsPersonalMoveBlocker()`) build on it and must be applied to **every** write path, single **and** mass. Host-key mismatch **blocks** rotation (D4); `username_cache` is hard-validated (R1) and generated passwords filtered for `chpasswd` safety (R9).
 
+## Licence Trial (self-service extension trial)
+
+> Full architecture details: @.claude/docs/architecture-licence-trial.md
+
+Settings → API → **Licence** lets an administrator request a 30-day extension trial from
+`licence.teampass.net` (release 3.2.2). Decisions in the DB-free `app/sources/licence_trial_logic.php`,
+transport and state in `app/sources/licence.functions.php`, handlers in `admin.queries.php`
+(`get_licence_panel`, `refresh_licence_status`, `request_licence_trial`).
+
+**Rule: the TeamPass server is the caller** — answers are RSA-signed and must be verified on the
+**raw body**; a body that does not verify is discarded (except a 5xx, reported as unreachable).
+**Rule: never poll in the background** — one shared budget of 6 `info.php` calls/hour covers the
+dashboard widget, the Licence tab and the manual button; a cache hit never consumes it.
+**Rule: validate the FQDN before the POST** — a trial is granted once per (FQDN, product) forever,
+and `browser_extension_fqdn` legitimately holds `localhost` on local installs.
+**Rule: the extension key must never change once a licence exists** — the licence server has no
+update route. **Rule: `202` is a success, and a resent link kills the previous one** — both must be
+stated in the interface, they are the top support drivers.
+
 ## Browser Extension Auto-Configuration
 
 > Full architecture details: @.claude/docs/architecture-extension-autoconfig.md

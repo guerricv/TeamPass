@@ -533,6 +533,10 @@ if (isset($params['action']) && $params['action'] === 'connections') {
             $cell = $lang->get('mfa_code_send_by_email');
         } elseif ($record['label'] === 'authentication_lockout_removed') {
             $cell = $lang->get('authentication_lockout_removed');
+        } elseif ($record['label'] === 'at_licence_trial_requested') {
+            $cell = $lang->get('licence_trial_log_requested');
+        } elseif ($record['label'] === 'at_licence_trial_activated') {
+            $cell = $lang->get('licence_trial_log_activated');
         } elseif (strpos($record['label'], 'at_email_template_updated:') === 0
             || strpos($record['label'], 'at_email_template_reset:') === 0
         ) {

@@ -320,6 +320,50 @@ The "Current Status" section displays:
 - **"Test License" button**: Allows manual license verification
 - **Error messages**: In case of configuration or license problems
 
+### Requesting a Free Trial
+
+An administrator can request an evaluation licence directly from Teampass, without contacting anyone.
+
+Go to **Settings → API → Licence**. The tab shows the identity this instance would be licensed under — its FQDN and its extension key — followed by the state of the licence.
+
+#### Before you request
+
+Two values are sent as the identity of your instance and cannot be changed afterwards:
+
+- **The FQDN** must be a public host name such as `teampass.example.com`. Values like `localhost`, an IP address, or a subfolder name are refused by Teampass before anything is sent. A trial is granted **once per FQDN and per product, forever**, so an incorrect FQDN would spend the only trial this instance will ever get.
+- **The extension key** becomes the secret of the licence. Once a licence is registered it must never be regenerated: the licence server has no update route, and a new key would leave your instance unable to prove it owns its own licence.
+
+The contact e-mail must belong to the domain of the instance. If your mailboxes are hosted elsewhere, ask for the trial by writing to `contact@teampass.net`.
+
+#### The confirmation e-mail
+
+Requesting the trial sends a confirmation message to the address you provided. **Nothing is activated until you open the link it contains** — as long as you have not confirmed, your instance remains eligible for a trial.
+
+Two points cause most support requests:
+
+- **The link works only once**, and it expires after 48 hours. Past that, ask for a new message.
+- **Asking for a new message invalidates the previous link.** If you request a resend, open the most recent e-mail; clicking the link in the older one will report an invalid link.
+
+Once you have opened the link, click **"I have confirmed — check"** in the Licence tab. Teampass then asks the licence server whether a licence now exists.
+
+#### After activation
+
+A trial licence is an ordinary licence: same endpoints, same rules. The one difference matters:
+
+> ⚠️ **A trial has no grace period.** Access stops on the day the trial expires. A subscription keeps 15 days of tolerance to cover a renewal in progress; a trial does not. Teampass warns you in the Licence tab and on the dashboard from seven days before the deadline.
+
+#### If the licence server cannot be reached
+
+The trial request is made by the Teampass server, not by your browser. On an instance without outbound Internet access, the Licence tab reports that the licence server is unreachable and offers a prefilled link to request the trial from `teampass.net` instead. The licence key is deliberately **not** part of that link: copy it from the Licence tab and paste it on that page.
+
+If your network requires a proxy, set the `proxy_ip` and `proxy_port` settings in the `teampass_misc` table: they are honoured for every call to the licence server.
+
+Note that this only affects *provisioning*. The extension itself checks the licence from the browser, so a browser that cannot reach `licence.teampass.net` cannot use the extension at all, whatever the Teampass server can reach.
+
+#### Trials not offered
+
+If self-service trials are closed on the licence server, the Licence tab says so and offers no form. This is a server-side switch; write to `contact@teampass.net`.
+
 ### Security and Privacy
 
 - ✅ **Secure connection**: All communications with the license server use HTTPS

@@ -563,6 +563,25 @@ if ($dedupeIndex !== false && mysqli_num_rows($dedupeIndex) === 0) {
     }
 }
 
+// Self-service licence trial (Licence tab of the API page). These rows are local state and
+// caches only: the licence server owns the trial registry, and an empty value here simply
+// means "nothing requested yet". licence_server_base_url is a staging escape hatch that is
+// deliberately not exposed in the interface.
+$licenceTrialDefaults = [
+    'licence_trial_state'      => '',
+    'licence_server_discovery' => '',
+    'licence_info_budget'      => '',
+    'licence_server_base_url'  => '',
+];
+foreach ($licenceTrialDefaults as $key => $value) {
+    mysqli_query(
+        $db_link,
+        "INSERT IGNORE INTO `" . $pre . "misc` (`type`, `intitule`, `valeur`) VALUES
+        ('admin', '" . mysqli_real_escape_string($db_link, $key) . "',
+         '" . mysqli_real_escape_string($db_link, $value) . "')"
+    );
+}
+
 // Drop the temporary installation table left behind by the installer.
 //
 // `_install` is created unprefixed by install-steps/run.step3|4 and holds the
