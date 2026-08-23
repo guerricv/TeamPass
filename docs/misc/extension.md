@@ -354,11 +354,25 @@ A trial licence is an ordinary licence: same endpoints, same rules. The one diff
 
 #### If the licence server cannot be reached
 
-The trial request is made by the Teampass server, not by your browser. On an instance without outbound Internet access, the Licence tab reports that the licence server is unreachable and offers a prefilled link to request the trial from `teampass.net` instead. The licence key is deliberately **not** part of that link: copy it from the Licence tab and paste it on that page.
+The trial request is made by the Teampass server, not by your browser. If your network requires a proxy, set the `proxy_ip` and `proxy_port` settings in the `teampass_misc` table: they are honoured for every call to the licence server.
 
-If your network requires a proxy, set the `proxy_ip` and `proxy_port` settings in the `teampass_misc` table: they are honoured for every call to the licence server.
+On an instance with **no outbound Internet access at all**, the Licence tab reports that the licence server is unreachable and offers a request link instead. That link opens a page hosted on the licence server which, once you confirm it there, performs the request your server could not make. Open it from any machine that does have Internet access.
 
-Note that this only affects *provisioning*. The extension itself checks the licence from the browser, so a browser that cannot reach `licence.teampass.net` cannot use the extension at all, whatever the Teampass server can reach.
+Three ways to get the link out of an isolated server, pick whichever fits:
+
+| | |
+|---|---|
+| **Send me the link** | E-mails it, using this instance's own mail settings — those usually keep working without Internet access. You can change the destination address. |
+| **Copy the link** | Puts it in the clipboard. |
+| **Show a QR code** | Generated locally, nothing leaves the browser. Scan it with a phone when the console has neither mail nor clipboard. |
+
+> ⚠️ **The link contains the licence key of your instance.** Treat it as a secret and do not forward the e-mail: the page it opens is the only place that key should ever be pasted.
+
+From there the flow is the usual one — the page confirms the request, a confirmation message reaches the address you gave, and opening its link activates the trial.
+
+**Your Teampass server will keep reporting the licence server as unreachable, and that is expected.** It has no way to observe the activation. It changes nothing: the extension checks the licence directly from the browser, so it picks up the trial on its own.
+
+That last point cuts both ways. Provisioning can happen without the Teampass server ever reaching `licence.teampass.net` — but a *browser* that cannot reach it will not be able to use the extension at all, whatever your server can reach.
 
 #### Trials not offered
 

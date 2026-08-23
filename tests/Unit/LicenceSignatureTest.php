@@ -209,17 +209,64 @@ class LicenceSignatureTest extends TestCase
     }
 
     /**
-     * The fallback link must never carry the licence key: it is the licence secret, and a
-     * query string survives in history, proxy logs and referrers.
+     * The offline request link targets the licence server itself, and carries everything
+     * trial.php needs - the licence key included.
+     *
+     * That last point is deliberate and worth a test of its own: the administrator is at a
+     * console with no Internet access and cannot copy 64 characters across by hand, and the
+     * destination is the legitimate holder of the token. Pointing this link anywhere else
+     * would turn it into a key leak.
      */
-    public function testFallbackUrlNeverCarriesTheKey(): void
+    public function testOfflineRequestUrlTargetsTheLicenceServerAndCarriesEverything(): void
     {
-        $url = licenceTrialFallbackUrl('teampass.acme.example', 'admin@acme.example', 'extension');
+        $url = licenceTrialOfflineRequestUrl(
+            [],
+            'teampass.acme.example',
+            'admin@acme.example',
+            str_repeat('a', 64),
+            'extension'
+        );
 
-        self::assertStringStartsWith(LICENCE_TRIAL_FALLBACK_URL . '?', $url);
+        self::assertStringStartsWith(LICENCE_SERVER_BASE_URL . LICENCE_TRIAL_REQUEST_PATH . '?', $url);
         self::assertStringContainsString('fqdn=teampass.acme.example', $url);
+        self::assertStringContainsString('email=admin%40acme.example', $url);
+        self::assertStringContainsString('token=' . str_repeat('a', 64), $url);
         self::assertStringContainsString('product=extension', $url);
-        self::assertStringNotContainsString('token', $url);
-        self::assertStringNotContainsString('key', $url);
+    }
+
+    /**
+     * A staging licence server is reached through licence_server_base_url, so the offline
+     * link must follow it: a link still pointing at production would send a staging FQDN to
+     * the real registry, and a trial is granted once per FQDN forever.
+     */
+    public function testOfflineRequestUrlFollowsTheBaseUrlOverride(): void
+    {
+        $url = licenceTrialOfflineRequestUrl(
+            ['licence_server_base_url' => 'https://staging.licence.example'],
+            'teampass.acme.example',
+            'admin@acme.example',
+            str_repeat('a', 64),
+            'extension'
+        );
+
+        self::assertStringStartsWith('https://staging.licence.example' . LICENCE_TRIAL_REQUEST_PATH, $url);
+    }
+
+    /**
+     * An http:// override that is not a loopback address must be ignored: the link carries
+     * the licence key, so it may never be built on a plaintext third-party host.
+     */
+    public function testOfflineRequestUrlRefusesAnInsecureOverride(): void
+    {
+        $url = licenceTrialOfflineRequestUrl(
+            ['licence_server_base_url' => 'http://evil.example'],
+            'teampass.acme.example',
+            'admin@acme.example',
+            str_repeat('a', 64),
+            'extension'
+        );
+
+        self::assertStringStartsWith(LICENCE_SERVER_BASE_URL, $url);
+        self::assertStringNotContainsString('evil.example', $url);
     }
 }

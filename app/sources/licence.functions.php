@@ -50,12 +50,16 @@ const LICENCE_TRIAL_DEFAULT_PATH = '/api/v1.2/trial.php';
 const LICENCE_INFO_PATH = '/api/v1.2/info.php';
 
 /**
- * Page an administrator is sent to when this server cannot reach the licence server itself.
- * The licence key is deliberately NOT put in this URL: it is the licence secret, and a query
- * string ends up in browser history, proxy logs and referrers. It is displayed next to the
- * link with a copy button instead.
+ * Human-facing page an administrator opens from a machine that has Internet access, when
+ * this server has none. It performs, behind a captcha, the POST that this server could not
+ * make: trial.php is POST-only JSON, so a link in an e-mail can never reach it directly.
+ *
+ * The licence key IS carried in this link. The destination is the licence server itself —
+ * the legitimate holder of that token — and the alternative is asking an administrator to
+ * copy 64 characters by hand off an air-gapped console, which is the very problem being
+ * solved. The residue is the browser history of the machine that opens the link.
  */
-const LICENCE_TRIAL_FALLBACK_URL = 'https://teampass.net/trial';
+const LICENCE_TRIAL_REQUEST_PATH = '/api/v1.2/trial-request.php';
 
 /** Commercial contact offered on every terminal refusal. */
 const LICENCE_CONTACT_EMAIL = 'contact@teampass.net';
@@ -624,23 +628,68 @@ function licenceRequestTrial(
 }
 
 /**
- * Build the prefilled fallback URL used when this server has no outbound access.
+ * Build the prefilled request link handed to the administrator when this server has no
+ * outbound access.
  *
- * The licence key is never part of it — see LICENCE_TRIAL_FALLBACK_URL.
+ * Everything trial.php needs travels in the URL, the licence key included — see
+ * LICENCE_TRIAL_REQUEST_PATH for why. The destination page never submits on its own: mail
+ * security gateways and antivirus link scanners follow links, and an auto-submit would
+ * consume the one and only trial before the administrator opened the message.
  *
- * @param string $fqdn    Instance FQDN.
- * @param string $email   Contact e-mail.
- * @param string $product Product.
+ * @param array  $SETTINGS TeamPass settings (for the staging base URL override).
+ * @param string $fqdn     Instance FQDN.
+ * @param string $email    Contact e-mail.
+ * @param string $token    Licence key.
+ * @param string $product  Product.
  *
  * @return string
  */
-function licenceTrialFallbackUrl(string $fqdn, string $email, string $product): string
-{
-    return LICENCE_TRIAL_FALLBACK_URL . '?' . http_build_query([
+function licenceTrialOfflineRequestUrl(
+    array $SETTINGS,
+    string $fqdn,
+    string $email,
+    string $token,
+    string $product
+): string {
+    $parameters = [
         'fqdn' => $fqdn,
         'email' => $email,
+        'token' => $token,
         'product' => $product,
-    ]);
+    ];
+
+    // Metadata only, never blocking (contract §2): omitted rather than sent empty when the
+    // version constants are not loaded.
+    if (defined('TP_VERSION') === true && defined('TP_VERSION_MINOR') === true) {
+        $parameters['version'] = TP_VERSION . '.' . TP_VERSION_MINOR;
+    }
+
+    return licenceServerBaseUrl($SETTINGS) . LICENCE_TRIAL_REQUEST_PATH . '?' . http_build_query($parameters);
+}
+
+/**
+ * Record that an offline request link was e-mailed, so the panel can say so afterwards.
+ *
+ * This is not a state transition: nothing was requested yet, and the licence server knows
+ * nothing about it. It is only a trace of what this instance handed over, and to whom.
+ *
+ * @param array  $SETTINGS TeamPass settings.
+ * @param string $product  Product the link was built for.
+ * @param string $email    Address the link was sent to.
+ * @param int    $now      Current timestamp.
+ *
+ * @return void
+ */
+function licenceMarkOfflineLinkSent(array $SETTINGS, string $product, string $email, int $now): void
+{
+    $state = licenceReadTrialState($SETTINGS);
+    $entry = licenceTrialStateForProduct($state, $product);
+
+    $entry['offline_link_sent_at'] = $now;
+    $entry['offline_link_sent_to'] = $email;
+
+    $state[$product] = $entry;
+    licenceWriteTrialState($state);
 }
 
 /**
@@ -678,8 +727,13 @@ function licenceBuildPanelViewModel(
     $vm = licenceTrialResolveDisplay($state, $info['info'], $discovery, $now, $fqdn, $token, $product);
 
     // A body we could not authenticate must never look like a normal answer.
-    $vm['key_rotated'] = licenceServerKeyFingerprintMatches($discovery) === false;
-    if ($info['untrusted'] === true || $vm['key_rotated'] === true) {
+    // An unusable identity stays the message: it is the blocker, and the offline request
+    // link cannot be built from an FQDN the licence server would refuse anyway.
+    $vm['key_rotated'] = $vm['panel'] !== LICENCE_PANEL_INVALID_FQDN
+        && licenceServerKeyFingerprintMatches($discovery) === false;
+    if ($vm['panel'] !== LICENCE_PANEL_INVALID_FQDN
+        && ($info['untrusted'] === true || $vm['key_rotated'] === true)
+    ) {
         $vm['panel'] = LICENCE_PANEL_UNREACHABLE;
         $vm['untrusted'] = true;
     } else {
@@ -692,7 +746,7 @@ function licenceBuildPanelViewModel(
     $vm['email_domain_aligned'] = $email === ''
         || licenceTrialEmailDomainLooksAligned($email, $vm['fqdn']);
     $vm['instance_domain'] = licenceTrialRegistrableGuess($vm['fqdn']);
-    $vm['fallback_url'] = licenceTrialFallbackUrl($vm['fqdn'], $email, $product);
+    $vm['offline_url'] = licenceTrialOfflineRequestUrl($SETTINGS, $vm['fqdn'], $email, $token, $product);
     $vm['contact_url'] = 'mailto:' . LICENCE_CONTACT_EMAIL;
     $vm['contact_email_support'] = LICENCE_CONTACT_EMAIL;
     $vm['budget_exhausted'] = (bool) $info['budget_exhausted'];
@@ -703,6 +757,9 @@ function licenceBuildPanelViewModel(
     $dateFormat = ($SETTINGS['date_format'] ?? 'd/m/Y') . ' ' . ($SETTINGS['time_format'] ?? 'H:i');
     $vm['link_expires_at_display'] = $vm['link_expires_at'] > 0
         ? date($dateFormat, $vm['link_expires_at'])
+        : '';
+    $vm['offline_link_sent_display'] = $vm['offline_link_sent_at'] > 0
+        ? date($dateFormat, $vm['offline_link_sent_at'])
         : '';
     $expiration = licenceTrialParseServerDate((string) $vm['licence']['expiration_date']);
     $vm['licence']['expiration_display'] = $expiration > 0

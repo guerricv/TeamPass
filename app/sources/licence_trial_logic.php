@@ -463,6 +463,11 @@ function licenceTrialStateForProduct(array $state, string $product): array
         'resend_allowed_at' => (int) ($entry['resend_allowed_at'] ?? 0),
         'requested_at' => (int) ($entry['requested_at'] ?? 0),
         'last_error' => (string) ($entry['last_error'] ?? ''),
+        // Offline flow: this instance could not reach the licence server, so the request
+        // link was handed to the administrator instead. Both keys survive every transition
+        // of licenceTrialNextState(), which merges onto this entry.
+        'offline_link_sent_at' => (int) ($entry['offline_link_sent_at'] ?? 0),
+        'offline_link_sent_to' => (string) ($entry['offline_link_sent_to'] ?? ''),
     ];
 }
 
@@ -801,6 +806,8 @@ function licenceTrialResolveDisplay(
         'resend_in' => max(0, $entry['resend_allowed_at'] - $now),
         'fqdn_changed_since_request' => $entry['fqdn'] !== ''
             && $entry['fqdn'] !== licenceTrialNormalizeFqdn($fqdn),
+        'offline_link_sent_at' => $entry['offline_link_sent_at'],
+        'offline_link_sent_to' => $entry['offline_link_sent_to'],
         'licence' => [
             'status' => $productInfo['status'],
             'expiration_date' => $productInfo['expiration_date'],
@@ -832,6 +839,16 @@ function licenceTrialResolveDisplay(
         return $vm;
     }
 
+    // The identity is checked before the network state on purpose. It is a local fact,
+    // it is actionable without Internet access, and the offline request link cannot be
+    // built without it - telling an administrator "the server is unreachable" when the
+    // real blocker is an FQDN of "localhost" sends them looking at their firewall.
+    if ($fqdnValid === false || $tokenValid === false) {
+        $vm['panel'] = LICENCE_PANEL_INVALID_FQDN;
+
+        return $vm;
+    }
+
     if ($discovery['server_online'] === false) {
         $vm['panel'] = LICENCE_PANEL_UNREACHABLE;
 
@@ -840,12 +857,6 @@ function licenceTrialResolveDisplay(
 
     if ($discovery['trial_available'] === false) {
         $vm['panel'] = LICENCE_PANEL_CLOSED;
-
-        return $vm;
-    }
-
-    if ($fqdnValid === false || $tokenValid === false) {
-        $vm['panel'] = LICENCE_PANEL_INVALID_FQDN;
 
         return $vm;
     }

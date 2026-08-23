@@ -20,6 +20,7 @@ Lets an administrator request a 30-day evaluation licence for the browser extens
 | Rendering + throttled buttons | `app/pages/api.js.php` |
 | Dashboard widget | `app/pages/admin.js.php` → `loadExtensionLicenceInfo()` |
 | Settings | `public/install/install-steps/run.step5.php`, `public/install/upgrade_run_3.2.2.php` |
+| Offline request page (licence server) | `_things/licence-server-api/trial-request.php` + `.selftest.php` + `TRIAL-REQUEST-PAGE-DEPLOYMENT.md` |
 | Tests | `tests/Unit/LicenceTrialLogicTest.php`, `tests/Unit/LicenceSignatureTest.php` |
 
 ## The three routes
@@ -106,6 +107,53 @@ They are the top support drivers, per the contract:
 And one after activation: **a trial has no grace period.** `trial: true` removes the 15 days a
 subscription keeps to cover a renewal, so the warning has to come *before* the deadline — from D-7
 in the Licence panel and in the dashboard widget.
+
+## The offline path (no outbound Internet access)
+
+`trial.php` answers a **POST** only, so a link can never call it. An instance with no
+outbound access therefore cannot request its trial at all — and the online path above is the
+only one the licence server offers.
+
+The way out is a **human-facing page on the licence server**,
+`GET /api/v1.2/trial-request.php?fqdn=…&email=…&token=…&product=…&version=…`, the sibling of
+`confirm-trial.php`. It renders a prefilled summary, and performs the POST same-origin once
+the administrator confirms it behind a captcha. Source and deployment note live in
+`_things/licence-server-api/` (`trial-request.php`, `trial-request.selftest.php`,
+`TRIAL-REQUEST-PAGE-DEPLOYMENT.md`).
+
+TeamPass builds that link with `licenceTrialOfflineRequestUrl()` and offers three carriers in
+the *unreachable* panel — e-mail (the instance's own SMTP relay, which usually still works),
+clipboard, and a QR code rendered locally by the already-loaded `plugins/qrcodejs`. The
+e-mail goes through `send_licence_trial_link` in `admin.queries.php` and is customizable
+(`licence_trial_offline_link` in the catalog, tokens `#tp_fqdn#`, `#tp_contact_email#`,
+`#tp_trial_link#`).
+
+**Rule: the link carries the licence key, and only ever points at the licence server.**
+The administrator is at an air-gapped console and cannot copy 64 characters across by hand;
+the destination is the legitimate holder of that token. `licenceServerBaseUrl()` still gates
+the host (HTTPS or loopback only), so a staging override follows and an `http://` third party
+never does. The residue is the browser history of the machine that opens the link.
+
+**Rule: sending the link is not a state transition.** Nothing was requested — the licence
+server knows nothing about it. `offline_link_sent_at` / `offline_link_sent_to` are a trace on
+the per-product state, the trial stays requestable, and `licenceTrialNextState()` merges over
+them so a later real `202` keeps both facts.
+
+**Rule: the identity is resolved before the network state.** `licenceTrialResolveDisplay()`
+checks the FQDN and the key first: both are local facts, and on an isolated instance both
+failures are true at once — answering "the licence server is unreachable" to an FQDN of
+`localhost` sends the administrator to their firewall for nothing. It is also what keeps a
+useless link from being built.
+
+**Rule: nothing on that page is auto-submitted.** Every parameter is in the URL, so it could
+fire on load — but mail security gateways and antivirus link scanners follow links, and an
+auto-submit would consume the one and only trial before the administrator opened the message.
+
+**What this path cannot do:** the instance will never observe the activation, since `info.php`
+stays unreachable. That costs nothing — the browser extension validates the licence
+**from the browser** (`lib/modules/licence-checker.js`), so the trial works while the TeamPass
+server stays offline forever. The panel says so explicitly, otherwise a permanently
+"unreachable" status reads as a failure.
 
 ## Products
 

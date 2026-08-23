@@ -724,4 +724,106 @@ class LicenceTrialLogicTest extends TestCase
         self::assertSame(9, licenceTrialDaysLeft('2026-09-10 23:59:59', $now));
         self::assertLessThan(0, licenceTrialDaysLeft('2026-08-30 23:59:59', $now));
     }
+
+    /**
+     * An unusable identity is reported as such even when the licence server is unreachable.
+     *
+     * Both are true at once on an isolated instance whose FQDN was never set. Reporting
+     * "unreachable" would send the administrator looking at the firewall, when the blocker
+     * is local and the offline request link cannot be built without a real FQDN anyway.
+     */
+    public function testInvalidIdentityWinsOverUnreachable(): void
+    {
+        $offline = licenceTrialParseDiscovery(null);
+        self::assertFalse($offline['server_online']);
+
+        $vm = licenceTrialResolveDisplay(
+            [],
+            [],
+            $offline,
+            time(),
+            'localhost',
+            str_repeat('a', 64)
+        );
+
+        self::assertSame(LICENCE_PANEL_INVALID_FQDN, $vm['panel']);
+        self::assertFalse($vm['fqdn_valid']);
+    }
+
+    /**
+     * With a usable identity and no outbound access, the panel is the offline one.
+     */
+    public function testUnreachableWithAUsableIdentity(): void
+    {
+        $vm = licenceTrialResolveDisplay(
+            [],
+            [],
+            licenceTrialParseDiscovery(null),
+            time(),
+            'teampass.acme.example',
+            str_repeat('a', 64)
+        );
+
+        self::assertSame(LICENCE_PANEL_UNREACHABLE, $vm['panel']);
+        self::assertTrue($vm['fqdn_valid']);
+        self::assertTrue($vm['token_valid']);
+    }
+
+    /**
+     * The offline trace is only a record of what this instance handed over, never a state.
+     *
+     * Nothing was requested when the link was e-mailed - the licence server knows nothing
+     * about it - so the state must stay 'none' and the trial must remain requestable.
+     */
+    public function testOfflineLinkTraceIsNotAStateTransition(): void
+    {
+        $now = time();
+        $state = ['extension' => [
+            'offline_link_sent_at' => $now,
+            'offline_link_sent_to' => 'admin@acme.example',
+        ]];
+
+        $entry = licenceTrialStateForProduct($state, 'extension');
+        self::assertSame(LICENCE_TRIAL_STATE_NONE, $entry['state']);
+        self::assertSame($now, $entry['offline_link_sent_at']);
+
+        $vm = licenceTrialResolveDisplay(
+            $state,
+            [],
+            licenceTrialParseDiscovery(null),
+            $now,
+            'teampass.acme.example',
+            str_repeat('a', 64)
+        );
+
+        self::assertSame(LICENCE_PANEL_UNREACHABLE, $vm['panel']);
+        self::assertSame($now, $vm['offline_link_sent_at']);
+        self::assertSame('admin@acme.example', $vm['offline_link_sent_to']);
+    }
+
+    /**
+     * The trace must survive a later real request: licenceTrialNextState() merges onto the
+     * existing entry, so a 202 arriving after an offline link was sent keeps both facts.
+     */
+    public function testOfflineTraceSurvivesALaterRequest(): void
+    {
+        $now = time();
+        $state = ['extension' => [
+            'offline_link_sent_at' => $now - 3600,
+            'offline_link_sent_to' => 'admin@acme.example',
+        ]];
+
+        $classified = licenceTrialClassifyResponse(
+            202,
+            ['status' => 'CONFIRMATION_SENT', 'expires_at' => '2026-08-24 16:30:07', 'resend_after' => 900],
+            true,
+            false
+        );
+
+        $next = licenceTrialNextState($state, 'extension', $classified, $now, 'teampass.acme.example', 'a@acme.example');
+        $entry = licenceTrialStateForProduct($next, 'extension');
+
+        self::assertSame(LICENCE_TRIAL_STATE_PENDING, $entry['state']);
+        self::assertSame($now - 3600, $entry['offline_link_sent_at']);
+    }
 }

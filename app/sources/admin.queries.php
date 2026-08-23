@@ -3651,6 +3651,131 @@ case 'request_licence_trial':
     );
     break;
 
+case 'send_licence_trial_link':
+    /**
+     * E-mail the offline trial request link to the administrator.
+     *
+     * For an instance with no outbound Internet access. trial.php is POST-only JSON, so a
+     * link cannot call it: the link opens a page ON the licence server, which performs the
+     * POST behind a captcha once the administrator confirms. Nothing is requested here — this
+     * only carries the link out of an isolated machine, using the SMTP relay such a server
+     * almost always still has.
+     *
+     * @return array {error, message, panel}
+     */
+    if ($post_key !== $session->get('key') || (int) $session->get('user-admin') !== 1) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
+        break;
+    }
+
+    $offlineInput = $post_data !== '' && $post_data !== null
+        ? prepareExchangedData($post_data, 'decode')
+        : [];
+    if (is_array($offlineInput) === false) {
+        $offlineInput = [];
+    }
+
+    $offlineProduct = (string) ($offlineInput['product'] ?? LICENCE_TRIAL_DEFAULT_PRODUCT);
+    $offlineEmail = trim((string) ($offlineInput['contact_email'] ?? ''));
+    $offlineRecipient = trim((string) ($offlineInput['send_to'] ?? ''));
+    $offlineFqdn = licenceTrialNormalizeFqdn((string) ($SETTINGS['browser_extension_fqdn'] ?? ''));
+    $offlineToken = (string) ($SETTINGS['browser_extension_key'] ?? '');
+
+    if ($offlineRecipient === '') {
+        $offlineRecipient = $offlineEmail;
+    }
+
+    if (in_array($offlineProduct, LICENCE_TRIAL_PRODUCTS, true) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
+        break;
+    }
+
+    // The same guards as a live request. The link ends up on the licence server, so an FQDN
+    // that would spend the one and only trial on a garbage name must not be put in it.
+    if (licenceTrialIsValidFqdn($offlineFqdn) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_fqdn')],
+            'encode'
+        );
+        break;
+    }
+
+    if (licenceTrialIsValidToken($offlineToken) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_token')],
+            'encode'
+        );
+        break;
+    }
+
+    if (filter_var($offlineEmail, FILTER_VALIDATE_EMAIL) === false || strlen($offlineEmail) > 255
+        || filter_var($offlineRecipient, FILTER_VALIDATE_EMAIL) === false || strlen($offlineRecipient) > 255
+    ) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_email')],
+            'encode'
+        );
+        break;
+    }
+
+    $offlineUrl = licenceTrialOfflineRequestUrl(
+        $SETTINGS,
+        $offlineFqdn,
+        $offlineEmail,
+        $offlineToken,
+        $offlineProduct
+    );
+
+    // sendMailToUser() strips newlines from the body, so the layout is made of <br> tags.
+    sendMailToUser(
+        $offlineRecipient,
+        $lang->get('licence_trial_offline_email_body'),
+        $lang->get('licence_trial_offline_email_subject'),
+        [
+            '#tp_fqdn#' => $offlineFqdn,
+            '#tp_contact_email#' => $offlineEmail,
+            '#tp_trial_link#' => $offlineUrl,
+        ],
+        false
+    );
+
+    licenceMarkOfflineLinkSent($SETTINGS, $offlineProduct, $offlineRecipient, time());
+
+    // The audit trail records that the link left the instance and where it went. The licence
+    // key travels in the link and is never written to the logs.
+    logEvents(
+        $SETTINGS,
+        'admin_action',
+        'at_licence_trial_link_sent',
+        (string) $session->get('user-id'),
+        (string) $session->get('user-login'),
+        $offlineProduct . ' / ' . $offlineRecipient
+    );
+
+    // The state was just rewritten; re-read so the panel shows the trace.
+    $SETTINGS = (new ConfigManager())->getAllSettings();
+
+    echo prepareExchangedData(
+        [
+            'error' => false,
+            'message' => $lang->get('licence_trial_offline_email_sent'),
+            'panel' => licenceBuildPanelViewModel(
+                $SETTINGS,
+                (string) $session->get('user-email'),
+                false,
+                $offlineProduct
+            ),
+        ],
+        'encode'
+    );
+    break;
+
 // ========================================
 // TEAMPASS LATEST RELEASE BADGE
 // ========================================

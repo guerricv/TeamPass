@@ -537,6 +537,8 @@ if (isset($params['action']) && $params['action'] === 'connections') {
             $cell = $lang->get('licence_trial_log_requested');
         } elseif ($record['label'] === 'at_licence_trial_activated') {
             $cell = $lang->get('licence_trial_log_activated');
+        } elseif ($record['label'] === 'at_licence_trial_link_sent') {
+            $cell = $lang->get('licence_trial_log_link_sent');
         } elseif (strpos($record['label'], 'at_email_template_updated:') === 0
             || strpos($record['label'], 'at_email_template_reset:') === 0
         ) {

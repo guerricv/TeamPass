@@ -387,8 +387,17 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         'budget_exhausted' => $lang->get('licence_trial_budget_exhausted'),
         'unreachable_title' => $lang->get('licence_server_unreachable_title'),
         'unreachable_body' => $lang->get('licence_server_unreachable_body'),
-        'fallback_link' => $lang->get('licence_trial_fallback_link'),
-        'fallback_tip' => $lang->get('licence_trial_fallback_tip'),
+        'offline_title' => $lang->get('licence_trial_offline_title'),
+        'offline_intro' => $lang->get('licence_trial_offline_intro'),
+        'offline_warning' => $lang->get('licence_trial_offline_warning'),
+        'offline_send_label' => $lang->get('licence_trial_offline_send_label'),
+        'offline_send_button' => $lang->get('licence_trial_offline_send_button'),
+        'offline_send_tip' => $lang->get('licence_trial_offline_send_tip'),
+        'offline_copy_button' => $lang->get('licence_trial_offline_copy_button'),
+        'offline_qr_button' => $lang->get('licence_trial_offline_qr_button'),
+        'offline_qr_tip' => $lang->get('licence_trial_offline_qr_tip'),
+        'offline_already_sent' => $lang->get('licence_trial_offline_already_sent'),
+        'offline_no_feedback' => $lang->get('licence_trial_offline_no_feedback'),
         'fqdn_label' => $lang->get('browser_extension_fqdn'),
         'valid_until' => $lang->get('valid_until'),
         'users' => $lang->get('users'),
@@ -492,13 +501,65 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
             + '<h5><i class="fas fa-plug-circle-xmark mr-2"></i>' + licenceLang.unreachable_title + '</h5>'
             + '<p class="mb-2">' + reason + '</p>'
 
-        if (vm.trial_available === true || vm.state === 'none') {
-            html += '<p class="mb-1"><a href="' + licenceText(vm.fallback_url) + '" target="_blank" rel="noopener">'
-                + licenceLang.fallback_link + ' <i class="fas fa-external-link-alt fa-xs"></i></a></p>'
-                + '<small class="text-muted">' + licenceLang.fallback_tip + '</small>'
+        html += '</div>'
+
+        // A licence that already exists needs no request, and an answer we could not
+        // authenticate is not the moment to hand out a link built on it.
+        if (vm.state !== 'none' || vm.untrusted === true || vm.key_rotated === true) {
+            return html
         }
 
-        return html + '</div>'
+        return html + licenceRenderOfflineRequest(vm)
+    }
+
+    /**
+     * The offline request block.
+     *
+     * trial.php answers a POST only, so the link cannot call it: it opens a page hosted on the
+     * licence server which performs the request, behind a captcha, once the administrator
+     * confirms it there. Three carriers because none of them covers every situation - a mail
+     * relay may be missing, a console may have no clipboard, and an air-gapped machine may
+     * have nothing but a phone next to it.
+     */
+    function licenceRenderOfflineRequest(vm) {
+        let html = '<h5 class="mt-4">' + licenceLang.offline_title + '</h5>'
+            + '<p class="text-muted">' + licenceLang.offline_intro + '</p>'
+
+        if (vm.offline_link_sent_at > 0) {
+            html += '<div class="callout callout-info py-2">'
+                + '<i class="fas fa-paper-plane mr-2"></i>' + licenceLang.offline_already_sent
+                + ' <strong>' + licenceText(vm.offline_link_sent_display) + '</strong>'
+                + ' (' + licenceText(vm.offline_link_sent_to) + ')</div>'
+        }
+
+        html += '<div class="input-group input-group-sm mb-2">'
+            + '<input type="text" class="form-control no-save" id="licence-offline-url" readonly value="'
+            + licenceText(vm.offline_url) + '">'
+            + '<div class="input-group-append">'
+            + '<button class="btn btn-outline-secondary" id="licence-offline-copy" type="button">'
+            + '<i class="fas fa-copy mr-1"></i>' + licenceLang.offline_copy_button + '</button>'
+            + '<button class="btn btn-outline-secondary" id="licence-offline-qr" type="button">'
+            + '<i class="fas fa-qrcode mr-1"></i>' + licenceLang.offline_qr_button + '</button>'
+            + '</div></div>'
+            + '<div class="text-warning mb-3"><i class="fas fa-triangle-exclamation mr-1"></i>'
+            + licenceLang.offline_warning + '</div>'
+            + '<div id="licence-offline-qr-box" class="mb-3 d-none">'
+            + '<div id="licence-offline-qr-canvas"></div>'
+            + '<small class="text-muted">' + licenceLang.offline_qr_tip + '</small></div>'
+
+        html += '<div class="row align-items-center mb-2">'
+            + '<div class="col-5">' + licenceLang.offline_send_label
+            + '<small class="form-text text-muted">' + licenceLang.offline_send_tip + '</small></div>'
+            + '<div class="col-7"><div class="input-group input-group-sm">'
+            + '<input type="email" class="form-control no-save" id="licence-offline-email" value="'
+            + licenceText(vm.contact_email_suggestion) + '" maxlength="255">'
+            + '<div class="input-group-append">'
+            + '<button class="btn btn-primary" id="licence-offline-send" type="button">'
+            + '<i class="fas fa-envelope mr-1"></i>' + licenceLang.offline_send_button + '</button>'
+            + '</div></div></div></div>'
+
+        return html + '<p class="text-muted small mt-3">'
+            + '<i class="fas fa-circle-info mr-1"></i>' + licenceLang.offline_no_feedback + '</p>'
     }
 
     // Panel A' - the FQDN or the key would waste the one and only trial.
@@ -785,6 +846,120 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
     $(document).on('click', '#licence-resend-trial', function(event) {
         event.preventDefault()
         licenceSendTrialRequest(($(this).data('email') || '').toString().trim())
+    })
+
+    // ---- Offline flow: carrying the request link out of a server with no Internet access.
+
+    $(document).on('click', '#licence-offline-copy', function(event) {
+        event.preventDefault()
+
+        // The shared helper falls back to execCommand when the async Clipboard API is
+        // unavailable, which is the case on an instance served over plain HTTP - a likely
+        // setup for the isolated servers this whole block exists for.
+        tpClipboardCopy(($('#licence-offline-url').val() || '').toString()).then(function(copied) {
+            if (copied === false) {
+                return
+            }
+            toastr.remove()
+            toastr.info(licenceLang.copied, '', {
+                timeOut: 2000,
+                progressBar: true,
+                positionClass: 'toast-bottom-right'
+            })
+        })
+    })
+
+    /**
+     * Render the link as a QR code, so an administrator standing at an isolated console can
+     * open it on a phone. qrcode.min.js is loaded on every page and generates locally - no
+     * request leaves the browser, which is the whole point here.
+     */
+    $(document).on('click', '#licence-offline-qr', function(event) {
+        event.preventDefault()
+
+        const $box = $('#licence-offline-qr-box')
+        if ($box.hasClass('d-none') === false) {
+            $box.addClass('d-none')
+            return
+        }
+
+        const $canvas = $('#licence-offline-qr-canvas')
+        if ($canvas.is(':empty') === true) {
+            if (typeof QRCode === 'undefined') {
+                toastr.remove()
+                toastr.error(licenceLang.answer_error, '', { closeButton: true })
+                return
+            }
+            new QRCode($canvas.get(0), {
+                text: ($('#licence-offline-url').val() || '').toString(),
+                width: 220,
+                height: 220,
+                correctLevel: QRCode.CorrectLevel.L
+            })
+        }
+
+        $box.removeClass('d-none')
+    })
+
+    $(document).on('click', '#licence-offline-send', function(event) {
+        event.preventDefault()
+
+        if (licenceRequestRunning === true) {
+            return
+        }
+        licenceRequestRunning = true
+
+        const $button = $(this)
+        $button.prop('disabled', true)
+
+        toastr.remove()
+        toastr.info(licenceLang.in_progress + ' ... <i class="fas fa-circle-notch fa-spin fa-2x"></i>')
+
+        $.post(
+            'sources/admin.queries.php', {
+                type: 'send_licence_trial_link',
+                data: prepareExchangedData(
+                    JSON.stringify({
+                        product: 'extension',
+                        contact_email: ($('#licence-trial-email').val()
+                            || $('#licence-offline-email').val() || '').toString().trim(),
+                        send_to: ($('#licence-offline-email').val() || '').toString().trim()
+                    }),
+                    'encode',
+                    licenceSessionKey
+                ),
+                key: licenceSessionKey
+            },
+            function(data) {
+                licenceRequestRunning = false
+                $button.prop('disabled', false)
+
+                data = decodeQueryReturn(data, licenceSessionKey)
+                if (data === undefined) {
+                    return
+                }
+
+                toastr.remove()
+                if (data.error === true) {
+                    toastr.error(data.message, licenceLang.caution, {
+                        timeOut: 8000,
+                        closeButton: true,
+                        progressBar: true
+                    })
+                } else {
+                    toastr.success(data.message, '', { timeOut: 6000, progressBar: true })
+                }
+
+                if (data.panel !== undefined) {
+                    licenceRenderPanel(data.panel)
+                }
+            }
+        ).fail(function() {
+            licenceRequestRunning = false
+            $button.prop('disabled', false)
+            toastr.remove()
+            toastr.error(licenceLang.answer_error, '', { closeButton: true })
+        })
     })
 
     $(document).on('click', '#licence-check-confirmed, #licence-refresh', function(event) {

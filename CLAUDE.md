@@ -240,7 +240,7 @@ Agentless SSH rotation of local Linux account passwords (release 3.2.2, feature 
 Settings → API → **Licence** lets an administrator request a 30-day extension trial from
 `licence.teampass.net` (release 3.2.2). Decisions in the DB-free `app/sources/licence_trial_logic.php`,
 transport and state in `app/sources/licence.functions.php`, handlers in `admin.queries.php`
-(`get_licence_panel`, `refresh_licence_status`, `request_licence_trial`).
+(`get_licence_panel`, `refresh_licence_status`, `request_licence_trial`, `send_licence_trial_link`).
 
 **Rule: the TeamPass server is the caller** — answers are RSA-signed and must be verified on the
 **raw body**; a body that does not verify is discarded (except a 5xx, reported as unreachable).
@@ -251,6 +251,12 @@ and `browser_extension_fqdn` legitimately holds `localhost` on local installs.
 **Rule: the extension key must never change once a licence exists** — the licence server has no
 update route. **Rule: `202` is a success, and a resent link kills the previous one** — both must be
 stated in the interface, they are the top support drivers.
+**Rule: an instance with no outbound access requests through the link, never through a POST it
+cannot make** — `licenceTrialOfflineRequestUrl()` builds a link to `trial-request.php` on the
+licence server (source in `_things/licence-server-api/`), carried out by e-mail, clipboard or QR;
+the link holds the licence key and must never point anywhere else. Sending it is a trace
+(`offline_link_sent_at`), not a state transition, and the instance will never see the activation —
+the extension validates from the browser, so that costs nothing.
 
 ## Browser Extension Auto-Configuration
 
