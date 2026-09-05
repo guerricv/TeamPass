@@ -134,6 +134,13 @@ the destination is the legitimate holder of that token. `licenceServerBaseUrl()`
 the host (HTTPS or loopback only), so a staging override follows and an `http://` third party
 never does. The residue is the browser history of the machine that opens the link.
 
+**Rule: the address in that block is the contact of the trial, not just a recipient.** It travels
+inside the link, and the licence server sends its confirmation there — so the link displayed,
+copied, scanned and mailed is rebuilt in the browser from the field (`licenceOfflineSyncEmail()`
+in `api.js.php`), and the same-domain warning is rendered there as it is in the online form. A link
+built on a different address is only refused at the very end, by `EMAIL_DOMAIN_MISMATCH` on the
+licence server page — on another machine, where nobody can correct it.
+
 **Rule: sending the link is not a state transition.** Nothing was requested — the licence
 server knows nothing about it. `offline_link_sent_at` / `offline_link_sent_to` are a trace on
 the per-product state, the trial stays requestable, and `licenceTrialNextState()` merges over

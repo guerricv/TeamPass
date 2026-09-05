@@ -1412,7 +1412,7 @@ return array(
     'licence_trial_offline_title' => 'Demander l\'essai depuis une autre machine',
     'licence_trial_offline_intro' => 'trial.php ne répond qu\'à un POST : un lien ne peut donc pas l\'appeler directement. Le lien ci-dessous ouvre une page hébergée sur le serveur de licence qui, après votre confirmation sur place, effectue la demande que ce serveur n\'a pas pu faire. Ouvrez-le depuis une machine disposant d\'un accès Internet.',
     'licence_trial_offline_warning' => 'Le lien contient la clé de licence de cette instance. Traitez-le comme un secret : il identifie votre licence, et la page qu\'il ouvre est le seul endroit où elle doit être collée.',
-    'licence_trial_offline_send_label' => 'Envoyer le lien à',
+    'licence_trial_offline_contact_tip' => 'Le message est envoyé à cette adresse, et le lien qu’il contient la désigne comme contact de l’essai : c’est là que le serveur de licence enverra sa confirmation. Elle doit appartenir au domaine de cette instance :',
     'licence_trial_offline_send_button' => 'M\'envoyer le lien',
     'licence_trial_offline_send_tip' => 'Utilise les paramètres de messagerie de cette instance, qui fonctionnent généralement sans accès Internet.',
     'licence_trial_offline_copy_button' => 'Copier le lien',

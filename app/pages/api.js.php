@@ -362,6 +362,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         'identity_unusable' => $lang->get('licence_trial_identity_unusable'),
         'error_fqdn' => $lang->get('licence_trial_error_fqdn'),
         'error_token' => $lang->get('licence_trial_error_token'),
+        'error_email' => $lang->get('licence_trial_error_email'),
         'pending_title' => $lang->get('licence_trial_pending_title'),
         'pending_body' => $lang->get('licence_trial_pending_body'),
         'pending_link_validity' => $lang->get('licence_trial_pending_link_validity'),
@@ -390,7 +391,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         'offline_title' => $lang->get('licence_trial_offline_title'),
         'offline_intro' => $lang->get('licence_trial_offline_intro'),
         'offline_warning' => $lang->get('licence_trial_offline_warning'),
-        'offline_send_label' => $lang->get('licence_trial_offline_send_label'),
+        'offline_contact_tip' => $lang->get('licence_trial_offline_contact_tip'),
         'offline_send_button' => $lang->get('licence_trial_offline_send_button'),
         'offline_send_tip' => $lang->get('licence_trial_offline_send_tip'),
         'offline_copy_button' => $lang->get('licence_trial_offline_copy_button'),
@@ -412,6 +413,11 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
     let licenceCountdownTimer = null
     let licenceLoadedAt = 0
     let licenceRequestRunning = false
+
+    // The offline link is rebuilt in the browser from these two, so that what is copied,
+    // scanned or mailed always carries the address currently shown in the field.
+    let licenceOfflineUrlModel = ''
+    let licenceOfflineDomain = ''
 
     // Escape everything coming from the licence server before it reaches the DOM.
     function licenceText(value) {
@@ -520,8 +526,17 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
      * confirms it there. Three carriers because none of them covers every situation - a mail
      * relay may be missing, a console may have no clipboard, and an air-gapped machine may
      * have nothing but a phone next to it.
+     *
+     * The address is asked for first, because it is not only the recipient of the message: it
+     * travels inside the link and becomes the contact address of the trial, the one the
+     * licence server sends its confirmation to. A link built on another address would be
+     * refused with EMAIL_DOMAIN_MISMATCH on the licence server page, hours later and on
+     * another machine - which is exactly where nobody can correct it.
      */
     function licenceRenderOfflineRequest(vm) {
+        licenceOfflineUrlModel = (vm.offline_url || '').toString()
+        licenceOfflineDomain = (vm.instance_domain || '').toString()
+
         let html = '<h5 class="mt-4">' + licenceLang.offline_title + '</h5>'
             + '<p class="text-muted">' + licenceLang.offline_intro + '</p>'
 
@@ -531,6 +546,25 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
                 + ' <strong>' + licenceText(vm.offline_link_sent_display) + '</strong>'
                 + ' (' + licenceText(vm.offline_link_sent_to) + ')</div>'
         }
+
+        html += '<div class="row align-items-center mb-2">'
+            + '<div class="col-5">' + licenceLang.contact_email
+            + '<small class="form-text text-muted">' + licenceLang.offline_contact_tip
+            + ' <strong>' + licenceText(vm.instance_domain) + '</strong></small></div>'
+            + '<div class="col-7"><div class="input-group input-group-sm">'
+            + '<input type="email" class="form-control no-save" id="licence-offline-email" value="'
+            + licenceText(vm.contact_email_suggestion) + '" maxlength="255">'
+            + '<div class="input-group-append">'
+            + '<button class="btn btn-primary" id="licence-offline-send" type="button">'
+            + '<i class="fas fa-envelope mr-1"></i>' + licenceLang.offline_send_button + '</button>'
+            + '</div></div>'
+            + '<small class="form-text text-muted">' + licenceLang.offline_send_tip + '</small>'
+            + '</div></div>'
+
+        html += '<div class="text-warning mb-2 d-none" id="licence-offline-email-warning">'
+            + '<i class="fas fa-triangle-exclamation mr-1"></i>' + licenceLang.email_domain_warning + '</div>'
+            + '<div class="text-danger mb-2 d-none" id="licence-offline-email-invalid">'
+            + '<i class="fas fa-circle-xmark mr-1"></i>' + licenceLang.error_email + '</div>'
 
         html += '<div class="input-group input-group-sm mb-2">'
             + '<input type="text" class="form-control no-save" id="licence-offline-url" readonly value="'
@@ -547,19 +581,71 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
             + '<div id="licence-offline-qr-canvas"></div>'
             + '<small class="text-muted">' + licenceLang.offline_qr_tip + '</small></div>'
 
-        html += '<div class="row align-items-center mb-2">'
-            + '<div class="col-5">' + licenceLang.offline_send_label
-            + '<small class="form-text text-muted">' + licenceLang.offline_send_tip + '</small></div>'
-            + '<div class="col-7"><div class="input-group input-group-sm">'
-            + '<input type="email" class="form-control no-save" id="licence-offline-email" value="'
-            + licenceText(vm.contact_email_suggestion) + '" maxlength="255">'
-            + '<div class="input-group-append">'
-            + '<button class="btn btn-primary" id="licence-offline-send" type="button">'
-            + '<i class="fas fa-envelope mr-1"></i>' + licenceLang.offline_send_button + '</button>'
-            + '</div></div></div></div>'
-
         return html + '<p class="text-muted small mt-3">'
             + '<i class="fas fa-circle-info mr-1"></i>' + licenceLang.offline_no_feedback + '</p>'
+    }
+
+    // Same rule as licenceTrialRegistrableGuess() server-side: the last two labels, nothing
+    // more. It only ever drives a warning, never a refusal - the licence server owns that.
+    function licenceRegistrableGuess(host) {
+        const labels = host.toString().toLowerCase().replace(/\.+$/, '').split('.')
+
+        return labels.length < 2 ? labels.join('.') : labels.slice(-2).join('.')
+    }
+
+    function licenceEmailLooksValid(email) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)
+    }
+
+    function licenceEmailDomainAligned(email, instanceDomain) {
+        const at = email.lastIndexOf('@')
+
+        if (at === -1 || instanceDomain === '') {
+            return false
+        }
+
+        return licenceRegistrableGuess(email.slice(at + 1)) === instanceDomain
+    }
+
+    /**
+     * Rebuild the offline link from the address currently in the field.
+     *
+     * Without this the link keeps the address the panel was rendered with, and an administrator
+     * who corrects the address before copying, scanning or mailing it hands over a link that
+     * still carries the previous one.
+     */
+    function licenceOfflineSyncEmail() {
+        const $field = $('#licence-offline-email')
+        if ($field.length === 0) {
+            return
+        }
+
+        const email = ($field.val() || '').toString().trim()
+        const usable = licenceEmailLooksValid(email)
+        let url = ''
+
+        if (usable === true && licenceOfflineUrlModel !== '') {
+            try {
+                const built = new URL(licenceOfflineUrlModel)
+                built.searchParams.set('email', email)
+                url = built.toString()
+            } catch (error) {
+                url = ''
+            }
+        }
+
+        $('#licence-offline-url').val(url)
+        $('#licence-offline-email-invalid').toggleClass('d-none', email === '' || usable === true)
+        $('#licence-offline-email-warning').toggleClass(
+            'd-none',
+            usable === false || licenceEmailDomainAligned(email, licenceOfflineDomain) === true
+        )
+        $('#licence-offline-copy, #licence-offline-qr, #licence-offline-send').prop('disabled', url === '')
+
+        // The QR code is generated once from the link: a changed address must never leave the
+        // previous one encoded in an image still on screen.
+        $('#licence-offline-qr-canvas').empty()
+        $('#licence-offline-qr-box').addClass('d-none')
     }
 
     // Panel A' - the FQDN or the key would waste the one and only trial.
@@ -720,6 +806,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         }
 
         $('#licence-panel').html(html)
+        licenceOfflineSyncEmail()
         licenceStartCountdown()
     }
 
@@ -850,6 +937,10 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
 
     // ---- Offline flow: carrying the request link out of a server with no Internet access.
 
+    $(document).on('input change', '#licence-offline-email', function() {
+        licenceOfflineSyncEmail()
+    })
+
     $(document).on('click', '#licence-offline-copy', function(event) {
         event.preventDefault()
 
@@ -910,6 +1001,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         licenceRequestRunning = true
 
         const $button = $(this)
+        const offlineEmail = ($('#licence-offline-email').val() || '').toString().trim()
         $button.prop('disabled', true)
 
         toastr.remove()
@@ -921,9 +1013,11 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
                 data: prepareExchangedData(
                     JSON.stringify({
                         product: 'extension',
-                        contact_email: ($('#licence-trial-email').val()
-                            || $('#licence-offline-email').val() || '').toString().trim(),
-                        send_to: ($('#licence-offline-email').val() || '').toString().trim()
+                        // One address, two roles: the message goes there, and the link it
+                        // carries names it as the contact of the trial. The field is the only
+                        // source for both, so what is mailed matches what is displayed here.
+                        contact_email: offlineEmail,
+                        send_to: offlineEmail
                     }),
                     'encode',
                     licenceSessionKey

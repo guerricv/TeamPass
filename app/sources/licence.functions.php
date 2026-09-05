@@ -740,7 +740,13 @@ function licenceBuildPanelViewModel(
         $vm['untrusted'] = false;
     }
 
-    $email = $vm['contact_email'] !== '' ? $vm['contact_email'] : $defaultEmail;
+    // The address the administrator last used for the offline link is a better suggestion than
+    // the account address: the panel is re-rendered right after the message is sent, and the
+    // suggestion is what the offline link is built on.
+    $email = $vm['contact_email'] !== '' ? $vm['contact_email'] : (string) $vm['offline_link_sent_to'];
+    if ($email === '') {
+        $email = $defaultEmail;
+    }
 
     $vm['contact_email_suggestion'] = $email;
     $vm['email_domain_aligned'] = $email === ''

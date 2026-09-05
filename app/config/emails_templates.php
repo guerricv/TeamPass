@@ -379,8 +379,8 @@ return [
         'subject_key' => 'licence_trial_offline_email_subject',
         'subject_prefix' => '',
         'body_key' => 'licence_trial_offline_email_body',
-        // Exactly what admin.queries.php substitutes. '#link#' carries the licence key of
-        // the instance, so a customised body that drops it makes the message useless.
+        // Exactly what admin.queries.php substitutes. '#tp_trial_link#' carries the licence key
+        // of the instance, so a customised body that drops it makes the message useless.
         'tokens' => ['#tp_fqdn#', '#tp_contact_email#', '#tp_trial_link#'],
         'required_tokens' => ['#tp_trial_link#'],
         'label' => 'email_tpl_licence_trial_offline_link',

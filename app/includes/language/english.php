@@ -140,7 +140,7 @@ return array(
     'licence_trial_offline_title' => 'Request the trial from another machine',
     'licence_trial_offline_intro' => 'trial.php only answers a POST, so a link cannot call it directly. The link below opens a page hosted on the licence server which, once you confirm it there, performs the request this server could not make. Open it from a machine that has Internet access.',
     'licence_trial_offline_warning' => 'The link carries the licence key of this instance. Treat it as a secret: it identifies your licence, and the page it opens is the only place it should ever be pasted.',
-    'licence_trial_offline_send_label' => 'Send the link to',
+    'licence_trial_offline_contact_tip' => 'The message is sent to this address, and the link it carries names it as the contact of the trial: the licence server will send its confirmation there. It must belong to the domain of this instance:',
     'licence_trial_offline_send_button' => 'Send me the link',
     'licence_trial_offline_send_tip' => 'Uses the e-mail settings of this instance, which usually keep working without Internet access.',
     'licence_trial_offline_copy_button' => 'Copy the link',
