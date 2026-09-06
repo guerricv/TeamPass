@@ -1410,7 +1410,7 @@ return array(
     'licence_server_unreachable_title' => 'Serveur de licence injoignable',
     'licence_server_unreachable_body' => 'Ce serveur n’a pas pu joindre le serveur de licence. Rien n’a été envoyé. Cela signifie généralement que le serveur TeamPass n’a pas d’accès sortant à Internet, ou qu’il se trouve derrière un proxy.',
     'licence_trial_offline_title' => 'Demander l\'essai depuis une autre machine',
-    'licence_trial_offline_intro' => 'trial.php ne répond qu\'à un POST : un lien ne peut donc pas l\'appeler directement. Le lien ci-dessous ouvre une page hébergée sur le serveur de licence qui, après votre confirmation sur place, effectue la demande que ce serveur n\'a pas pu faire. Ouvrez-le depuis une machine disposant d\'un accès Internet.',
+    'licence_trial_offline_intro' => 'Ouvrez le lien ci-dessous depuis une machine disposant d\'un accès Internet. Il ouvre une page hébergée sur le serveur de licence qui, après votre confirmation sur place, effectue la demande que ce serveur n\'a pas pu faire. Cette étape supplémentaire existe parce que le serveur de licence n\'accepte cette demande qu\'en POST, ce qu\'un lien ne peut pas faire.',
     'licence_trial_offline_warning' => 'Le lien contient la clé de licence de cette instance. Traitez-le comme un secret : il identifie votre licence, et la page qu\'il ouvre est le seul endroit où elle doit être collée.',
     'licence_trial_offline_contact_tip' => 'Le message est envoyé à cette adresse, et le lien qu’il contient la désigne comme contact de l’essai : c’est là que le serveur de licence enverra sa confirmation. Elle doit appartenir au domaine de cette instance :',
     'licence_trial_offline_send_button' => 'M\'envoyer le lien',
