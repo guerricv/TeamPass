@@ -581,8 +581,11 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
             + '<div id="licence-offline-qr-canvas"></div>'
             + '<small class="text-muted">' + licenceLang.offline_qr_tip + '</small></div>'
 
-        return html + '<p class="text-muted small mt-3">'
-            + '<i class="fas fa-circle-info mr-1"></i>' + licenceLang.offline_no_feedback + '</p>'
+        // A callout, not a footnote: this is the sentence that stops a permanently
+        // "unreachable" panel from being read as a failure, and it is the last thing the
+        // administrator sees before leaving the page for another machine.
+        return html + '<div class="callout callout-info mt-3 mb-0">'
+            + '<i class="fas fa-circle-info mr-2"></i>' + licenceLang.offline_no_feedback + '</div>'
     }
 
     // Same rule as licenceTrialRegistrableGuess() server-side: the last two labels, nothing
