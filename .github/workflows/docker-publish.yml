@@ -12,6 +12,15 @@ on:
   pull_request:
     branches:
       - master
+  # Weekly rebuild of the published image from an unchanged master.
+  #
+  # The image is otherwise only ever rebuilt when someone pushes code, so between two
+  # TeamPass releases it keeps shipping the OS packages frozen at the last build while
+  # Alpine publishes security fixes for them. Nothing rescans it either, so the Trivy
+  # alerts only grow. This run rebuilds and rescans the same source, which is what makes
+  # those alerts close on their own.
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 # A release pushes master and the tag in one go, and publishing the GitHub
@@ -121,7 +130,11 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-
+            # Not on the weekly rebuild: that run republishes the SAME commit with newer
+            # OS packages, so it would move sha-<short> to a different digest and break
+            # the one tag whose whole purpose is to pin a commit to a fixed image. The
+            # rebuild refreshes the mutable tags (latest, master) and nothing else.
+            type=sha,prefix=sha-,enable=${{ github.event_name != 'schedule' }}
           labels: |
             org.opencontainers.image.title=TeamPass
             org.opencontainers.image.description=Collaborative Passwords Manager
@@ -147,6 +160,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # The weekly rebuild exists to replace the OS packages of an unchanged source.
+          # The layer cache would hand back the exact packages it is meant to replace -
+          # the `apk upgrade` layer hashes to the same key - and the base image would be
+          # reused from cache rather than re-pulled, so the run would publish an identical
+          # image and close nothing. Both are disabled for that event only, so ordinary
+          # pushes keep their fast cached builds.
+          no-cache: ${{ github.event_name == 'schedule' }}
+          pull: ${{ github.event_name == 'schedule' }}
           build-args: |
             TEAMPASS_VERSION=${{ steps.tpversion.outputs.version }}
             BUILD_DATE=${{ steps.meta.outputs.created }}
