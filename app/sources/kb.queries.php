@@ -2243,6 +2243,43 @@ switch ($type) {
         $rows = kbLoadLogRows();
         $recordsTotal = count($rows);
 
+        $userIds = array_values(array_unique(array_filter(array_column($rows, 'user_id'), static fn (int $id): bool => $id > 0)));
+        $usersById = [];
+        if (!empty($userIds)) {
+            $users = DB::query(
+                'SELECT id, login, name, lastname FROM ' . prefixTable('users') . ' WHERE id IN %li',
+                $userIds
+            );
+            foreach ($users as $user) {
+                $usersById[(int) $user['id']] = $user;
+            }
+        }
+
+        $reasonKeys = [
+            'label' => 'label',
+            'category' => 'category',
+            'description' => 'description',
+            'anyone_can_modify' => 'anyone_can_modify',
+            'allow_comments' => 'kb_allow_comments',
+            'associated_items' => 'kb_associated_items',
+            'attachments_upload' => 'kb_attachment_uploaded',
+            'attachments_delete' => 'kb_attachment_deleted',
+            'comment_add' => 'kb_comment_added',
+            'comment_delete' => 'kb_comment_deleted',
+        ];
+        foreach ($rows as &$row) {
+            $user = $usersById[$row['user_id']] ?? [];
+            $fullName = trim(trim((string) ($user['name'] ?? '')) . ' ' . trim((string) ($user['lastname'] ?? '')));
+            $login = (string) ($user['login'] ?? $row['user_login']);
+            $row['user_display'] = $fullName === '' ? $login : $fullName . ($login === '' ? '' : ' [' . $login . ']');
+            $row['action_display'] = $lang->get($row['action']);
+            $row['reason_display'] = implode(', ', array_map(
+                static fn (string $reason): string => isset($reasonKeys[$reason]) ? (string) $lang->get($reasonKeys[$reason]) : $reason,
+                explode(', ', $row['reason'])
+            ));
+        }
+        unset($row);
+
         $filteredRows = array_values(array_filter($rows, static function (array $row) use ($searchValue): bool {
             if ($searchValue === '') {
                 return true;
@@ -2250,9 +2287,9 @@ switch ($type) {
 
             $haystack = mb_strtolower(
                 (string) ($row['label'] ?? '') . ' ' .
-                (string) ($row['user_login'] ?? '') . ' ' .
-                (string) ($row['action'] ?? '') . ' ' .
-                (string) ($row['reason'] ?? '')
+                (string) ($row['user_display'] ?? '') . ' ' .
+                (string) ($row['action_display'] ?? '') . ' ' .
+                (string) ($row['reason_display'] ?? '')
             );
 
             return mb_strpos($haystack, mb_strtolower($searchValue)) !== false;
@@ -2265,9 +2302,9 @@ switch ($type) {
             $dataRows[] = [
                 date(($SETTINGS['date_format'] ?? 'Y-m-d') . ' ' . ($SETTINGS['time_format'] ?? 'H:i:s'), (int) ($row['date'] ?? time())),
                 normalizeLogDisplayValue($row['label'] ?? ''),
-                normalizeLogDisplayValue($row['user_login'] ?? ''),
-                normalizeLogDisplayValue($row['action'] ?? ''),
-                normalizeLogDisplayValue($row['reason'] ?? ''),
+                normalizeLogDisplayValue($row['user_display'] ?? ''),
+                normalizeLogDisplayValue($row['action_display'] ?? ''),
+                normalizeLogDisplayValue($row['reason_display'] ?? ''),
             ];
         }
 

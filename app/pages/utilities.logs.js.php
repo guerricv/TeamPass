@@ -776,8 +776,6 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
             ['title' => $lang->get('folder'), 'column' => 't.title'],
             ['title' => $lang->get('user'), 'column' => 'u.login'],
             ['title' => $lang->get('action'), 'column' => 'l.action'],
-            ['title' => $lang->get('api'), 'column' => 'l.raison'],
-            ['title' => $lang->get('at_personnel'), 'column' => 't.personal_folder'],
         ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>;
         var searchColumn = 'all';
         $('#table-items').one('preInit.dt', function() {

@@ -1196,6 +1196,12 @@ $LANG = array(
     'ops_lapr_rotations' => 'محاولات التدوير خلال الفترة',
     'ops_lapr_success_rate' => 'معدل نجاح المحاولات',
     'ops_lapr_rotation_trend' => 'نتائج محاولات التدوير بمرور الوقت',
+    'kb_allow_comments' => 'السماح بالتعليقات',
+    'kb_associated_items' => 'العناصر المرتبطة',
+    'kb_attachment_uploaded' => 'تم رفع مرفق إلى قاعدة المعرفة',
+    'kb_attachment_deleted' => 'تم حذف مرفق من قاعدة المعرفة',
+    'kb_comment_added' => 'تمت إضافة تعليق',
+    'kb_comment_deleted' => 'تم حذف التعليق',
     '' => ''
 );
 

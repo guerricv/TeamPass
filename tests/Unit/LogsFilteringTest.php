@@ -100,10 +100,10 @@ class LogsFilteringTest extends TestCase
 
     public function testColumnSelectionOnlyAcceptsTheUiAllowList(): void
     {
-        foreach (['l.date', 'i.id', 'i.label', 't.title', 'l.action', 'l.raison', 't.personal_folder'] as $column) {
+        foreach (['l.date', 'i.id', 'i.label', 't.title', 'l.action'] as $column) {
             self::assertSame([$column], getItemLogSearchColumns($column));
         }
-        foreach ([null, [], 'i.label) OR 1=1 --', 'u.name', 'unknown'] as $invalid) {
+        foreach ([null, [], 'i.label) OR 1=1 --', 'u.name', 'unknown', 'l.raison', 't.personal_folder'] as $invalid) {
             self::assertSame(getItemLogSearchColumns('all'), getItemLogSearchColumns($invalid));
         }
     }

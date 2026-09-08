@@ -147,12 +147,52 @@ class UtilitiesLogsEncodingTest extends TestCase
             );
         }
 
-        foreach (['label', 'user_login', 'action', 'reason'] as $field) {
+        foreach (['label', 'user_display', 'action_display', 'reason_display'] as $field) {
             self::assertStringContainsString(
                 "normalizeLogDisplayValue(\$row['{$field}'] ?? '')",
                 $knowledgeBase
             );
         }
+    }
+
+    private function knowledgeBaseLogData(array $rows, array $usersById, string $searchValue = '', string $language = 'french'): array
+    {
+        // Execute the handler's real display, search and pagination logic with disposable rows.
+        $source = $this->source('app/sources/kb.queries.php');
+        $branch = strpos($source, "case 'datatables_logs':");
+        $blockStart = strpos($source, '$reasonKeys = [', $branch);
+        $blockEnd = strpos($source, 'echo json_encode([', $blockStart);
+        $lang = new \TeampassClasses\Language\Language($language, __DIR__ . '/../../app/includes/language');
+        $SETTINGS = ['date_format' => 'Y-m-d', 'time_format' => 'H:i:s'];
+        $start = 0;
+        $length = 10;
+        eval(substr($source, $blockStart, $blockEnd - $blockStart));
+
+        return $dataRows;
+    }
+
+    public function testKnowledgeBaseLogsTranslateAndSearchDisplayedValuesWhileKeepingTextSafe(): void
+    {
+        $rows = [
+            ['date' => 100, 'label' => 'Guide', 'user_id' => 42, 'user_login' => 'clem', 'action' => 'at_shown', 'reason' => ''],
+            ['date' => 101, 'label' => 'Guide', 'user_id' => 43, 'user_login' => 'old-login', 'action' => 'at_modification', 'reason' => 'label, allow_comments, associated_items'],
+            ['date' => 102, 'label' => '<b>Title</b>', 'user_id' => 44, 'user_login' => '<b>login</b>', 'action' => 'legacy_action', 'reason' => '<img src=x onerror=alert(1)>'],
+        ];
+        $users = [42 => ['name' => 'Clémence', 'lastname' => 'Dupont', 'login' => 'clem']];
+        $data = $this->knowledgeBaseLogData($rows, $users);
+        self::assertSame('Clémence Dupont [clem]', $data[0][2]);
+        self::assertSame('Vu', $data[0][3]);
+        self::assertSame('old-login', $data[1][2]);
+        self::assertSame('Modification', $data[1][3]);
+        self::assertSame('Intitulé, Autoriser les commentaires, Éléments associés', $data[1][4]);
+        self::assertSame('&lt;b&gt;login&lt;/b&gt;', $data[2][2]);
+        self::assertSame('legacy_action', $data[2][3]);
+        self::assertSame('&lt;img src=x onerror=alert(1)&gt;', $data[2][4]);
+        foreach (['clémence', 'Dupont', 'Vu'] as $search) {
+            self::assertSame([$data[0]], $this->knowledgeBaseLogData($rows, $users, $search));
+        }
+        self::assertSame([$data[1]], $this->knowledgeBaseLogData($rows, $users, 'Éléments associés'));
+        self::assertSame('Accessed', $this->knowledgeBaseLogData($rows, $users, 'Accessed', 'english')[0][3]);
     }
 
     // ----------------------------------------------------------- client side

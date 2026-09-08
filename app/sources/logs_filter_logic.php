@@ -12,11 +12,11 @@ declare(strict_types=1);
  * Resolve an item-log search column against the columns offered by the page.
  * The User column displays the login and full name, so all three fields are searched.
  *
- * @return list<string>
+ * @return string[]
  */
 function getItemLogSearchColumns(mixed $column): array
 {
-    $columns = ['l.date', 'i.id', 'i.label', 't.title', 'u.login', 'l.action', 'l.raison', 't.personal_folder'];
+    $columns = ['l.date', 'i.id', 'i.label', 't.title', 'u.login', 'l.action'];
     if ($column === 'u.login') {
         return ['u.login', 'u.name', 'u.lastname'];
     }
