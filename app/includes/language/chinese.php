@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => '所有列',
+    'logs_search_column' => '在列中搜索',
+    'logs_purge_title' => '删除日志',
+    'logs_purge_help' => '根据以下条件永久删除当前标签页中的日志。这些条件不会筛选表格。要筛选显示的日志，请使用表格上方的搜索框。',
+    'logs_purge_criteria' => '删除条件',
+    'logs_purge_confirm' => '我确认永久删除当前标签页中符合这些条件的日志。',
+    'logs_purge_submit' => '删除符合条件的日志',
     'show_user_temporary_encryption_code' => '显示用户加密密码',
     'email_body_new_user' => '您好，<br><br>这是一封由Teampass密码管理器生成的电子邮件。<br><br>系统管理员已为您在Teampass中创建了一个用户账户。下次登录Teampass时，请使用以下凭据：<ul><li>登录名：#login#</li><li>密码：#password#</li></ul><br><br><br>此致',
     'user_password' => '用户密码',

@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Tất cả các cột',
+    'logs_search_column' => 'Tìm kiếm trong cột',
+    'logs_purge_title' => 'Xóa nhật ký',
+    'logs_purge_help' => 'Xóa vĩnh viễn các bản ghi nhật ký trong thẻ đang mở theo các tiêu chí bên dưới. Những tiêu chí này không lọc bảng. Để lọc các bản ghi nhật ký được hiển thị, hãy sử dụng ô tìm kiếm phía trên bảng.',
+    'logs_purge_criteria' => 'Tiêu chí xóa',
+    'logs_purge_confirm' => 'Tôi xác nhận xóa vĩnh viễn các bản ghi nhật ký khớp với những tiêu chí này trong thẻ đang mở.',
+    'logs_purge_submit' => 'Xóa các bản ghi nhật ký phù hợp',
     'show_user_temporary_encryption_code' => 'Hiển thị mã mã hóa người dùng',
     'email_body_new_user' => 'Xin chào,<br><br>Đây là email tự động từ trình quản lý mật khẩu Teampass.<br><br>Quản trị viên đã tạo tài khoản người dùng cho bạn trên Teampass. Lần tới bạn kết nối với Teampass, vui lòng sử dụng thông tin đăng nhập sau:<ul><li>Đăng nhập: #login#</li><li>Mật khẩu: #password#</li></ul><br><br><br>Trân trọng',
     'user_password' => 'Mật khẩu người dùng',

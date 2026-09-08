@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Todas as colunas',
+    'logs_search_column' => 'Pesquisar na coluna',
+    'logs_purge_title' => 'Eliminar registos',
+    'logs_purge_help' => 'Elimine permanentemente os registos do separador ativo de acordo com os critérios abaixo. Estes critérios não filtram a tabela. Para filtrar os registos apresentados, utilize o campo de pesquisa acima da tabela.',
+    'logs_purge_criteria' => 'Critérios de eliminação',
+    'logs_purge_confirm' => 'Confirmo a eliminação permanente dos registos que correspondem a estes critérios no separador ativo.',
+    'logs_purge_submit' => 'Eliminar registos correspondentes',
     'show_user_temporary_encryption_code' => 'Mostrar código de encriptação do utilizador',
     'email_body_new_user' => 'Olá,<br><br>Isto é um email automático do gestor de palavras-passe Teampass.<br><br>Um administrador criou-lhe uma conta no Teampass. Da próxima vez que se ligar ao Teampass por favor use as credenciais:<ul><li>Utilizador: #login#</li><li>Palavra-passe: #password#</li></ul><br><br><br>Cumprimentos',
     'user_password' => 'Palavra-passe do utilizador',

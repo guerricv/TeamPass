@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Toate coloanele',
+    'logs_search_column' => 'Caută în coloană',
+    'logs_purge_title' => 'Șterge înregistrările din jurnal',
+    'logs_purge_help' => 'Ștergeți definitiv înregistrările din jurnal din fila activă folosind criteriile de mai jos. Aceste criterii nu filtrează tabelul. Pentru a filtra înregistrările afișate, folosiți câmpul de căutare de deasupra tabelului.',
+    'logs_purge_criteria' => 'Criterii de ștergere',
+    'logs_purge_confirm' => 'Confirm ștergerea definitivă a înregistrărilor din jurnal care corespund acestor criterii în fila activă.',
+    'logs_purge_submit' => 'Șterge înregistrările corespunzătoare',
     'show_user_temporary_encryption_code' => 'Afișează codul de criptare utilizator',
     'email_body_new_user' => 'Bună,<br><br>Acesta este un e-mail generat de managerul de parole Teampass.<br><br>Un administrator a creat pentru dvs. un cont utilizator pe Teampass. Data viitoare când vă veți conecta la Teampass, vă rugăm folosiți următoarele credențiale:<ul><li>login: #login#</li><li>Parolă: #password#</li></ul><br><br><br>Salutări',
     'user_password' => 'Parolă utilizator',

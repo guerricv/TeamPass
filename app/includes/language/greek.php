@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Όλες οι στήλες',
+    'logs_search_column' => 'Αναζήτηση στη στήλη',
+    'logs_purge_title' => 'Διαγραφή καταγραφών',
+    'logs_purge_help' => 'Διαγράψτε οριστικά τις καταγραφές της ενεργής καρτέλας με βάση τα παρακάτω κριτήρια. Αυτά τα κριτήρια δεν φιλτράρουν τον πίνακα. Για να φιλτράρετε τις εμφανιζόμενες καταγραφές, χρησιμοποιήστε το πεδίο αναζήτησης πάνω από τον πίνακα.',
+    'logs_purge_criteria' => 'Κριτήρια διαγραφής',
+    'logs_purge_confirm' => 'Επιβεβαιώνω την οριστική διαγραφή των καταγραφών που αντιστοιχούν σε αυτά τα κριτήρια στην ενεργή καρτέλα.',
+    'logs_purge_submit' => 'Διαγραφή καταγραφών που αντιστοιχούν στα κριτήρια',
     'show_user_temporary_encryption_code' => 'Show user encryption code',
     'email_body_new_user' => 'Hello,<br><br>This is a generated email from Teampass passwords manager.<br><br>An administrator has created for you a user account on Teampass. Next time you will connect to Teampass, please use next credentials:<ul><li>login: #login#</li><li>Password: #password#</li></ul><br><br><br>Cheers',
     'user_password' => 'User password',

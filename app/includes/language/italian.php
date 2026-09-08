@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Tutte le colonne',
+    'logs_search_column' => 'Cerca nella colonna',
+    'logs_purge_title' => 'Elimina i log',
+    'logs_purge_help' => 'Elimina definitivamente i log della scheda attiva in base ai criteri seguenti. Questi criteri non filtrano la tabella. Per filtrare i log visualizzati, usa il campo di ricerca sopra la tabella.',
+    'logs_purge_criteria' => 'Criteri di eliminazione',
+    'logs_purge_confirm' => 'Confermo l\'eliminazione definitiva dei log che corrispondono a questi criteri nella scheda attiva.',
+    'logs_purge_submit' => 'Elimina i log corrispondenti',
     'show_user_temporary_encryption_code' => 'Mostra codice di crittografia utente',
     'email_body_new_user' => 'Ciao,<br><br>Questa è un’e-mail generata dal gestore delle password di Teampass.<br><br>Un amministratore ha creato per te un account utente su Teampass. La prossima volta che ti connetterai a Teampass, utilizza le seguenti credenziali:<ul><li>login: #login#</li><li>Password: #password#</li></ul><br><br><br>Saluti',
     'user_password' => 'Password utente',

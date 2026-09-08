@@ -29,6 +29,13 @@
  */
 global $LANG;
 $LANG = array(
+    'logs_search_all_columns' => 'كل الأعمدة',
+    'logs_search_column' => 'البحث في العمود',
+    'logs_purge_title' => 'حذف السجلات',
+    'logs_purge_help' => 'احذف سجلات علامة التبويب النشطة نهائيًا باستخدام المعايير أدناه. هذه المعايير لا تُصفّي الجدول. لتصفية السجلات المعروضة، استخدم حقل البحث أعلى الجدول.',
+    'logs_purge_criteria' => 'معايير الحذف',
+    'logs_purge_confirm' => 'أؤكد الحذف النهائي للسجلات المطابقة لهذه المعايير في علامة التبويب النشطة.',
+    'logs_purge_submit' => 'حذف السجلات المطابقة',
     'decryption_failed_for_some_fields' => 'Some custom fields could not be decrypted. They may be corrupted or encrypted with an outdated key.',
     'private_key_decryption_failed' => 'Unable to decrypt your encryption keys. Please contact your administrator to regenerate your keys.',
     'sending_emails' => 'Sending emails',
@@ -1191,3 +1198,5 @@ $LANG = array(
     'ops_lapr_rotation_trend' => 'نتائج محاولات التدوير بمرور الوقت',
     '' => ''
 );
+
+return $LANG;

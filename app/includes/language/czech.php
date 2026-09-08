@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Všechny sloupce',
+    'logs_search_column' => 'Hledat ve sloupci',
+    'logs_purge_title' => 'Smazat záznamy deníku',
+    'logs_purge_help' => 'Trvale smažte záznamy deníku na aktivní kartě podle níže uvedených kritérií. Tato kritéria nefiltrují tabulku. Chcete-li filtrovat zobrazené záznamy, použijte vyhledávací pole nad tabulkou.',
+    'logs_purge_criteria' => 'Kritéria smazání',
+    'logs_purge_confirm' => 'Potvrzuji trvalé smazání záznamů deníku odpovídajících těmto kritériím na aktivní kartě.',
+    'logs_purge_submit' => 'Smazat odpovídající záznamy',
     'show_user_temporary_encryption_code' => 'Show user encryption code',
     'email_body_new_user' => 'Hello,<br><br>This is a generated email from Teampass passwords manager.<br><br>An administrator has created for you a user account on Teampass. Next time you will connect to Teampass, please use next credentials:<ul><li>login: #login#</li><li>Password: #password#</li></ul><br><br><br>Cheers',
     'user_password' => 'User password',

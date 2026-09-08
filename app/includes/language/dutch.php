@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Alle kolommen',
+    'logs_search_column' => 'Zoeken in kolom',
+    'logs_purge_title' => 'Logboeken opschonen',
+    'logs_purge_help' => 'Verwijder logboekvermeldingen op het actieve tabblad permanent op basis van de onderstaande criteria. Deze criteria filteren de tabel niet. Gebruik het zoekveld boven de tabel om de weergegeven logboekvermeldingen te filteren.',
+    'logs_purge_criteria' => 'Verwijdercriteria',
+    'logs_purge_confirm' => 'Ik bevestig dat de logboekvermeldingen die aan deze criteria voldoen op het actieve tabblad permanent worden verwijderd.',
+    'logs_purge_submit' => 'Overeenkomende logboekvermeldingen verwijderen',
     'show_user_temporary_encryption_code' => 'Toon gebruikersversleutelingscode',
     'email_body_new_user' => 'Hallo,<br><br>Een beheerder heeft een gebruikersaccount aangemaakt:<ul><li>login: #login#</li><li>Wachtwoord: #password#</li></ul><br><br>Groeten',
     'user_password' => 'Gebruikerswachtwoord',

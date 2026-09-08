@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Összes oszlop',
+    'logs_search_column' => 'Keresés az oszlopban',
+    'logs_purge_title' => 'Naplóbejegyzések törlése',
+    'logs_purge_help' => 'Az aktív lapon lévő naplóbejegyzések végleges törlése az alábbi feltételek alapján. Ezek a feltételek nem szűrik a táblázatot. A megjelenített naplóbejegyzések szűréséhez használja a táblázat feletti keresőmezőt.',
+    'logs_purge_criteria' => 'Törlési feltételek',
+    'logs_purge_confirm' => 'Megerősítem az aktív lapon a feltételeknek megfelelő naplóbejegyzések végleges törlését.',
+    'logs_purge_submit' => 'A feltételeknek megfelelő naplóbejegyzések törlése',
     'show_user_temporary_encryption_code' => 'Felhasználó titkosító kód megjelenítése',
     'email_body_new_user' => 'Helló,<br><br>Ez egy generált e-mail a TeamPass jelszókezelőtől.<br><br>Egy adminisztrátor létrehozott Önnek egy felhasználói fiókot a TeamPass-on. Következő alkalommal, amikor csatlakozik a TeamPass-hoz, kérjük használja a következő hitelesítő adatokat:<ul><li>bejelentkezés: #login#</li><li>Jelszó: #password#</li></ul><br><br><br>Üdvözlettel',
     'user_password' => 'Felhasználó jelszó',

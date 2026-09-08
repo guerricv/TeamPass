@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Totes les columnes',
+    'logs_search_column' => 'Cerca a la columna',
+    'logs_purge_title' => 'Suprimir registres',
+    'logs_purge_help' => 'Suprimiu permanentment els registres de la pestanya activa segons els criteris següents. Aquests criteris no filtren la taula. Per filtrar els registres mostrats, utilitzeu el camp de cerca situat damunt de la taula.',
+    'logs_purge_criteria' => 'Criteris de supressió',
+    'logs_purge_confirm' => 'Confirmo la supressió permanent dels registres que compleixen aquests criteris a la pestanya activa.',
+    'logs_purge_submit' => 'Suprimir els registres coincidents',
     'show_user_temporary_encryption_code' => 'Mostra el codi de xifratge de l’usuari',
     'email_body_new_user' => 'Hola,<br><br>Aquest és un correu electrònic generat pel gestor de contrasenyes de Teampass.<br><br>Un administrador us ha creat un compte d’usuari a Teampass. La propera vegada que us connecteu a Teampass, utilitzeu les següents credencials:<ul><li>inici de sessió: #login#</li><li>Contrasenya: #contrasenya#</li></ul><br><br><br>Salut',
     'user_password' => 'Contrasenya',

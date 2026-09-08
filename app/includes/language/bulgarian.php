@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Всички колони',
+    'logs_search_column' => 'Търсене в колона',
+    'logs_purge_title' => 'Изтриване на записи в дневника',
+    'logs_purge_help' => 'Изтрийте окончателно записите в дневника от активния раздел според критериите по-долу. Тези критерии не филтрират таблицата. За да филтрирате показаните записи, използвайте полето за търсене над таблицата.',
+    'logs_purge_criteria' => 'Критерии за изтриване',
+    'logs_purge_confirm' => 'Потвърждавам окончателното изтриване на записите в дневника, които отговарят на тези критерии в активния раздел.',
+    'logs_purge_submit' => 'Изтриване на съответстващите записи',
     'show_user_temporary_encryption_code' => 'Show user encryption code',
     'email_body_new_user' => 'Hello,<br><br>This is a generated email from Teampass passwords manager.<br><br>An administrator has created for you a user account on Teampass. Next time you will connect to Teampass, please use next credentials:<ul><li>login: #login#</li><li>Password: #password#</li></ul><br><br><br>Cheers',
     'user_password' => 'User password',

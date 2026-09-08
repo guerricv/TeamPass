@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Todas las columnas',
+    'logs_search_column' => 'Buscar en la columna',
+    'logs_purge_title' => 'Eliminar registros',
+    'logs_purge_help' => 'Elimine permanentemente los registros de la pestaña activa según los criterios siguientes. Estos criterios no filtran la tabla. Para filtrar los registros mostrados, utilice el campo de búsqueda situado encima de la tabla.',
+    'logs_purge_criteria' => 'Criterios de eliminación',
+    'logs_purge_confirm' => 'Confirmo la eliminación permanente de los registros que coinciden con estos criterios en la pestaña activa.',
+    'logs_purge_submit' => 'Eliminar registros coincidentes',
     'show_user_temporary_encryption_code' => 'Mostrar código de cifrado de usuario',
     'email_body_new_user' => 'Hola,<br><br>Este es un correo generado por el gestor de contraseñas Teampass.<br><br>Un administrador ha creado para usted una cuenta de usuario en Teampass. La próxima vez que se conecte a Teampass, por favor use las siguientes credenciales:<ul><li>Usuario: #login#</li><li>Contraseña: #password#</li></ul><br><br><br>Saludos',
     'user_password' => 'Contraseña de usuario',

@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Kõik veerud',
+    'logs_search_column' => 'Otsi veerust',
+    'logs_purge_title' => 'Kustuta logikirjed',
+    'logs_purge_help' => 'Kustuta aktiivse vahekaardi logikirjed jäädavalt allolevate tingimuste alusel. Need tingimused ei filtreeri tabelit. Kuvatavate logikirjete filtreerimiseks kasuta tabeli kohal olevat otsinguvälja.',
+    'logs_purge_criteria' => 'Kustutamise tingimused',
+    'logs_purge_confirm' => 'Kinnitan aktiivse vahekaardi nendele tingimustele vastavate logikirjete jäädava kustutamise.',
+    'logs_purge_submit' => 'Kustuta tingimustele vastavad logikirjed',
     'show_user_temporary_encryption_code' => 'Kuva kasutaja krüptimisvõti',
     'email_body_new_user' => 'Tere!<br><br>See on Teampassi poolt koostatud e-kiri.<br><br>Peakasutaja on loonud sulle Teampassi kasutajakonto. Järgmisel sisselogimisel kasuta selliseid andmeid:<ul><li>kasutajanimi: #login#</li><li>Salasõna: #password#</li></ul><br><br><br>Tervitades',
     'user_password' => 'Kasutaja salasõna',

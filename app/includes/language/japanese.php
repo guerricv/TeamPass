@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'すべての列',
+    'logs_search_column' => '列内を検索',
+    'logs_purge_title' => 'ログを削除',
+    'logs_purge_help' => '以下の条件に従って、現在のタブのログを完全に削除します。これらの条件では表は絞り込まれません。表示するログを絞り込むには、表の上の検索欄を使用してください。',
+    'logs_purge_criteria' => '削除条件',
+    'logs_purge_confirm' => '現在のタブでこれらの条件に一致するログを完全に削除することを確認しました。',
+    'logs_purge_submit' => '条件に一致するログを削除',
     'show_user_temporary_encryption_code' => 'ユーザーの暗号化コードを表示',
     'email_body_new_user' => 'こんにちは<br><br>これメールは Teampass パスワード マネージャーから自動生成されています.<br><br>管理者が Teampass のユーザー アカウントを作成しました。次回 Teampass にログインする際、次のログイン情報を使用してください:<ul><li>ログインID: #login#</li><li>パスワード: #password#</li></ul><br><br><br>',
     'user_password' => 'ユーザーのパスワード',
