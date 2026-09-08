@@ -40,6 +40,7 @@ use voku\helper\AntiXSS;
 
 // Load functions
 require_once 'main.functions.php';
+require_once __DIR__ . '/logs_filter_logic.php';
 
 /**
  * Encode a single value as a safe JSON string literal for the manually built DataTables output.
@@ -575,6 +576,7 @@ if (isset($params['action']) && $params['action'] === 'connections') {
     require_once TEAMPASS_APP . '/sources/main.functions.php';
     //Columns name
     $aColumns = ['l.date', 'i.id', 'i.label', 't.title', 'u.login', 'l.action', 'l.raison', 't.personal_folder', 'u.name', 'u.lastname'];
+    $searchColumns = getItemLogSearchColumns($params['search']['column'] ?? 'all');
 
     // Ordering
     $orderColumn = $aColumns[0];
@@ -586,7 +588,7 @@ if (isset($params['action']) && $params['action'] === 'connections') {
     $sWhere = new WhereClause('AND');
     if ($searchValue !== '') {
         $subclause = $sWhere->addClause('OR');
-        foreach ($aColumns as $column) {
+        foreach ($searchColumns as $column) {
             $subclause->add($column.' LIKE %ss', $searchValue);
         }
     }

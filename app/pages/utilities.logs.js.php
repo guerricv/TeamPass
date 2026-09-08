@@ -140,6 +140,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
 
     $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
         $('#selector-purge-action option[value="all"]').prop('selected', true);
+        $('#checkbox-purge-confirm').iCheck('uncheck');
         if (authenticationLockoutAdmin === true) {
             $('#logs-purge-footer').toggleClass('hidden', e.target.hash === '#authentication-lockouts');
         }
@@ -237,11 +238,6 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         'autoWidth': true,
         'ajax': {
             url: '<?php echo $SETTINGS['cpassman_url']; ?>/sources/logs.datatables.php?action=connections',
-            data: function(filter) {
-                var val = $("select", "#table-items_filter").val();
-                filter.search.column = val;
-                return filter;
-            }
         },
         'columnDefs': [
             {
@@ -769,61 +765,30 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
      * @return void
      */
     function showItems() {
-        /*$('#table-items thead tr').clone(true).appendTo( '#table-items thead' );
-    $('#table-items thead tr:eq(1) th').each( function (i) {
-        var title = $(this).text();
-        $(this).html( '<input type="text" placeholder="Search '+title+'" style="width:100%;">' );
- 
-        $( 'input', this ).on( 'keyup change', function () {
-            if ( table.column(i).search() !== this.value ) {
-                table
-                    .column(i)
-                    .search( this.value )
-                    .draw();
-            }
-        } );
-    } );*/
+        if ($.fn.dataTable.isDataTable('#table-items')) {
+            return;
+        }
 
-        var columns = [{
-                title: 'Date',
-                column: 'l.date'
-            },
-            {
-                title: 'ID',
-                column: 'i.id'
-            },
-            {
-                title: 'Label',
-                column: 'i.label'
-            },
-            {
-                title: 'Folder',
-                column: 't.title'
-            },
-            {
-                title: 'User',
-                column: 'u.login'
-            },
-            {
-                title: 'Action',
-                column: 'l.action'
-            },
-            {
-                title: 'API',
-                column: 'l.raison'
-            },
-            {
-                title: 'Personal',
-                column: 't.personal_folder'
-            }
-        ];
-        $("#table-items").one("preInit.dt", function() {
-            $sel = $('<select class="form-control" id="items-search-column"></select>');
-            $sel.html("<option value='all'>All Columns</option>");
+        var columns = <?php echo json_encode([
+            ['title' => $lang->get('date'), 'column' => 'l.date'],
+            ['title' => $lang->get('id'), 'column' => 'i.id'],
+            ['title' => $lang->get('label'), 'column' => 'i.label'],
+            ['title' => $lang->get('folder'), 'column' => 't.title'],
+            ['title' => $lang->get('user'), 'column' => 'u.login'],
+            ['title' => $lang->get('action'), 'column' => 'l.action'],
+            ['title' => $lang->get('api'), 'column' => 'l.raison'],
+            ['title' => $lang->get('at_personnel'), 'column' => 't.personal_folder'],
+        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>;
+        var searchColumn = 'all';
+        $('#table-items').one('preInit.dt', function() {
+            var $select = $('<select class="form-control" id="items-search-column"></select>');
+            $select.attr('aria-label', <?php echo json_encode($lang->get('logs_search_column'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+            $select.append($('<option>').val('all').text(<?php echo json_encode($lang->get('logs_search_all_columns'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>));
             $.each(columns, function(i, opt) {
-                $sel.append("<option value='" + opt.column + "'>" + opt.title + "</option>");
+                $select.append($('<option>').val(opt.column).text(opt.title));
             });
-            $("#table-items_filter label").append($sel);
+            $select.val(searchColumn);
+            $('#table-items_filter label').append($select);
         });
 
         oTableItems = $('#table-items').DataTable({
@@ -842,12 +807,19 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
             'serverSide': true,
             'responsive': true,
             'stateSave': true,
+            'stateSaveParams': function(settings, data) {
+                data.logsSearchColumn = searchColumn;
+            },
+            'stateLoadParams': function(settings, data) {
+                if (columns.some(function(column) { return column.column === data.logsSearchColumn; })) {
+                    searchColumn = data.logsSearchColumn;
+                }
+            },
             'autoWidth': true,
              'ajax': {
                 url: '<?php echo $SETTINGS['cpassman_url']; ?>/sources/logs.datatables.php?action=items',
                 data: function(filter) {
-                    var val = $("select", "#table-items_filter").val();
-                    filter.search.column = val;
+                    filter.search.column = searchColumn;
                     return filter;
                 }
             },
@@ -883,6 +855,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         });
 
         $('#myTabContent').on('change', '#items-search-column', function() {
+            searchColumn = $(this).val();
             oTableItems.ajax.reload();
         });
     }
@@ -964,6 +937,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         dateRangeEnd = '';
     $('#purge-date-range')
         .daterangepicker({
+            autoUpdateInput: false,
             locale: {
                 format: '<?php echo str_replace(['Y', 'm', 'd'], ['YYYY', 'MM', 'DD'], $SETTINGS['date_format']); ?>',
                 applyLabel: '<?php echo $lang->get('apply'); ?>',
@@ -976,10 +950,13 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         .on('apply.daterangepicker', function(ev, picker) {
             dateRangeStart = picker.startDate.format('YYYY-MM-DD');
             dateRangeEnd = picker.endDate.format('YYYY-MM-DD');
-        });;
+            $(this).val(picker.startDate.format(picker.locale.format) + ' - ' + picker.endDate.format(picker.locale.format)).trigger('change');
+        });
 
     // Clear date range
     $('#clear-purge-date').click(function() {
+        dateRangeStart = '';
+        dateRangeEnd = '';
         $('#purge-date-range').val('');
         $('.group-confirm-purge').addClass('hidden');
         $('#checkbox-purge-confirm').iCheck('uncheck');
@@ -993,6 +970,10 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         } else {
             $('.group-confirm-purge').addClass('hidden');
         }
+    });
+
+    $('#logs-purge-footer').on('change', '#purge-filter-user, #purge-filter-action', function() {
+        $('#checkbox-purge-confirm').iCheck('uncheck');
     });
 
     // Now purge

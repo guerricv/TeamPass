@@ -263,42 +263,46 @@ $kbEnabled = isset($SETTINGS['enable_kb']) === true && (int) $SETTINGS['enable_k
                     <div id="logs-purge-footer" class="card-footer<?php
                                             echo $isAdmin === true ? '' : ' hidden';
                                             ?>">
+                        <h5><i class="fas fa-broom mr-2"></i><?php echo $lang->get('logs_purge_title'); ?></h5>
+                        <p class="text-muted" id="logs-purge-help"><?php echo $lang->get('logs_purge_help'); ?></p>
                         <div class="form-group">
-                            <h5><i class="fas fa-broom mr-2"></i><?php echo $lang->get('purge') . ' ' . $lang->get('date_range'); ?></h5>
+                            <label for="purge-date-range"><?php echo $lang->get('date_range'); ?></label>
                             <div class="input-group">
                                 <div class="input-group-prepend">
                                     <span class="input-group-text">
                                         <i class="fas fa-calendar"></i>
                                     </span>
                                 </div>
-                                <input type="text" class="form-control float-right" id="purge-date-range">
+                                <input type="text" class="form-control float-right" id="purge-date-range" aria-describedby="logs-purge-help" readonly>
                                 <span class="input-group-append">
                                     <button type="button" class="btn btn-info btn-flat" id="clear-purge-date"><i class="fas fa-broom"></i></button>
                                 </span>
                             </div>
                         </div>
 
-                        <h5><i class="fas fa-filter mr-2"></i><?php echo $lang->get('filters'); ?></h5>
+                        <h6><i class="fas fa-filter mr-2"></i><?php echo $lang->get('logs_purge_criteria'); ?></h6>
                         <div class="row">
                             <div class="col-sm-6">
                                 <!-- select -->
                                 <div class="form-group">
-                                    <label><i class="fas fa-user mr-2"></i><?php echo $lang->get('user'); ?>:</label>
+                                    <label for="purge-filter-user"><i class="fas fa-user mr-2"></i><?php echo $lang->get('user'); ?>:</label>
                                     <select class="form-control" id="purge-filter-user">
                                         <option value="-1"><?php echo $lang->get('all'); ?></option>
                                     <?php
-                                    $rows = DB::query('SELECT id, name, lastname FROM ' . prefixTable('users') . ' WHERE admin = 0');
-foreach ($rows as $record) {
-    echo '
-                                        <option value="'.strval($record['id']).'">'.strval($record['name']).' '.strval($record['lastname']).'</option>';
-}
+                                    $rows = DB::query('SELECT id, login, name, lastname FROM ' . prefixTable('users') . ' WHERE id > 0 ORDER BY login');
+                                    foreach ($rows as $record) {
+                                        $displayName = trim(normalizeLogDisplayValue($record['name']) . ' ' . normalizeLogDisplayValue($record['lastname']));
+                                        echo '<option value="' . (int) $record['id'] . '">'
+                                            . ($displayName === '' ? '' : $displayName . ' ')
+                                            . '[' . normalizeLogDisplayValue($record['login']) . ']</option>';
+                                    }
                                     ?>
                                     </select>
                                 </div>
                             </div>
                             <div class="col-sm-6">
                                 <div class="form-group hidden" id="selector-purge-action">
-                                    <label><i class="fas fa-cog mr-2"></i><?php echo $lang->get('action'); ?>:</label>
+                                    <label for="purge-filter-action"><i class="fas fa-cog mr-2"></i><?php echo $lang->get('action'); ?>:</label>
                                     <select class="form-control" id="purge-filter-action">
                                         <option value="all"><?php echo $lang->get('all'); ?></option>
                                         <option value="at_creation"><?php echo $lang->get('at_creation'); ?></option>
@@ -317,11 +321,11 @@ foreach ($rows as $record) {
                         <div class="form-group mt-2 group-confirm-purge hidden">
                             <input type="checkbox" class="form-check-input form-item-control" id="checkbox-purge-confirm">
                             <label class="form-check-label ml-2" for="checkbox-purge-confirm">
-                                <?php echo $lang->get('please_confirm_deletion'); ?>
+                                <?php echo $lang->get('logs_purge_confirm'); ?>
                             </label>
                         </div>
                         <div class="form-group mt-2 group-confirm-purge hidden">
-                            <button class="btn btn-danger" id="button-perform-purge"><?php echo $lang->get('submit'); ?></button>
+                            <button class="btn btn-danger" id="button-perform-purge"><?php echo $lang->get('logs_purge_submit'); ?></button>
                         </div>
                     </div>
                 </div>

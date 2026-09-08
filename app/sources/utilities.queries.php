@@ -43,6 +43,7 @@ use TeampassClasses\NestedTree\NestedTree;
 require_once 'main.functions.php';
 require_once __DIR__ . '/backup.functions.php';
 require_once __DIR__ . '/health.logs.functions.php';
+require_once __DIR__ . '/logs_filter_logic.php';
 
 // init
 loadClasses('DB');
@@ -669,134 +670,35 @@ logItems(
                 'decode'
             );
 
-            // Prepare variables
-            $post_log_type = filter_var($dataReceived['dataType'], FILTER_SANITIZE_FULL_SPECIAL_CHARS);
-            $post_date_from = strtotime(filter_var($dataReceived['dateStart'], FILTER_SANITIZE_FULL_SPECIAL_CHARS));
-            $post_date_to = strtotime(filter_var($dataReceived['dateEnd'], FILTER_SANITIZE_FULL_SPECIAL_CHARS));
-            $post_filter_user = filter_var($dataReceived['filter_user'], FILTER_SANITIZE_NUMBER_INT);
-            $post_filter_action = filter_var($dataReceived['filter_action'], FILTER_SANITIZE_FULL_SPECIAL_CHARS);
+            if (!is_array($dataReceived)) {
+                $dataReceived = [];
+            }
+            $purgeRange = getLogsPurgeDateRange($dataReceived['dateStart'] ?? null, $dataReceived['dateEnd'] ?? null);
+            $purgeUserId = filter_var($dataReceived['filter_user'] ?? null, FILTER_VALIDATE_INT);
+            $purgeType = $dataReceived['dataType'] ?? null;
+            $purgeAction = $dataReceived['filter_action'] ?? null;
+            $purgeFilter = null;
 
-            // Check conditions
-            if (
-                empty($post_date_from) === false
-                && empty($post_date_to) === false
-                && empty($post_log_type) === false
-                && ($session->has('user-admin') && (int) $session->get('user-admin') === 1)
+            if ($purgeRange !== null && $purgeUserId !== false
+                && is_string($purgeType) && is_string($purgeAction)
+                && (int) ($session->get('user-admin') ?? 0) === 1
             ) {
-                if ($post_log_type === 'items') {
-                    DB::query(
-                        'SELECT * FROM ' . prefixTable('log_items') . '
-                        WHERE (date BETWEEN %i AND %i)'
-                        . ($post_filter_action === 'all' ? '' : ' AND action = "'.$post_filter_action.'"')
-                        . ((int) $post_filter_user === -1 ? '' : ' AND id_user = '.(int) $post_filter_user),
-                        $post_date_from,
-                        $post_date_to
+                $purgeLogin = null;
+                if ($purgeType === 'failed' && $purgeUserId > 0) {
+                    $purgeUser = DB::queryFirstRow(
+                        'SELECT login FROM ' . prefixTable('users') . ' WHERE id = %i',
+                        $purgeUserId
                     );
-                    $counter = DB::count();
-                    // Delete
-                    DB::delete(
-                        prefixTable('log_items'),
-                        '(date BETWEEN %i AND %i)'
-                        . ($post_filter_action === 'all' ? '' : ' AND action = "'.$post_filter_action.'"')
-                        . ((int) $post_filter_user === -1 ? '' : ' AND id_user = '.(int) $post_filter_user),
-                        $post_date_from,
-                        $post_date_to
-                    );
-                } elseif ($post_log_type === 'connections') {
-                    //db::debugmode(true);
-                    DB::query(
-                        'SELECT * FROM ' . prefixTable('log_system') . '
-                        WHERE type=%s '
-                        . 'AND (date BETWEEN %i AND %i)'
-                        . ($post_filter_action === 'all' ? '' : ' AND label = "'.$post_filter_action.'"')
-                        . ((int) $post_filter_user === -1 ? '' : ' AND qui = '.(int) $post_filter_user),
-                        'user_connection',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                    $counter = DB::count();
-                    // Delete
-                    DB::delete(
-                        prefixTable('log_system'),
-                        'type=%s '
-                        . 'AND (date BETWEEN %i AND %i)'
-                        . ($post_filter_action === 'all' ? '' : ' AND label = "'.$post_filter_action.'"')
-                        . ((int) $post_filter_user === -1 ? '' : ' AND qui = '.(int) $post_filter_user),
-                        'user_connection',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                } elseif ($post_log_type === 'errors') {
-                    DB::query(
-                        'SELECT * FROM ' . prefixTable('log_system') . ' WHERE type=%s ' .
-                            'AND (date BETWEEN %i AND %i)',
-                        'error',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                    $counter = DB::count();
-                    // Delete
-                    DB::delete(
-                        prefixTable('log_system'),
-                        'type=%s AND (date BETWEEN %i AND %i)',
-                        'error',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                } elseif ($post_log_type === 'copy') {
-                    DB::query(
-                        'SELECT * FROM ' . prefixTable('log_items') . ' WHERE action=%s ' .
-                            'AND (date BETWEEN %i AND %i)',
-                        'at_copy',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                    $counter = DB::count();
-                    // Delete
-                    DB::delete(
-                        prefixTable('log_items'),
-                        'action=%s AND (date BETWEEN %i AND %i)',
-                        'at_copy',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                } elseif ($post_log_type === 'admin') {
-                    DB::query(
-                        'SELECT * FROM ' . prefixTable('log_system') . ' WHERE type=%s ' .
-                            'AND (date BETWEEN %i AND %i)',
-                        'admin_action',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                    $counter = DB::count();
-                    // Delete
-                    DB::delete(
-                        prefixTable('log_system'),
-                        'type=%s AND (date BETWEEN %i AND %i)',
-                        'admin_action',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                } elseif ($post_log_type === 'failed') {
-                    DB::query(
-                        'SELECT * FROM ' . prefixTable('log_system') . ' WHERE type=%s ' .
-                            'AND (date BETWEEN %i AND %i)',
-                        'failed_auth',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                    $counter = DB::count();
-                    // Delete
-                    DB::delete(
-                        prefixTable('log_system'),
-                        'type=%s AND (date BETWEEN %i AND %i)',
-                        'failed_auth',
-                        $post_date_from,
-                        $post_date_to
-                    );
-                } else {
-                    $counter = 0;
+                    $purgeLogin = $purgeUser === null ? null : (string) $purgeUser['login'];
                 }
+                $purgeFilter = buildLogsPurgeFilter(
+                    $purgeType, $purgeRange[0], $purgeRange[1], $purgeUserId, $purgeAction, $purgeLogin
+                );
+            }
+
+            if ($purgeFilter !== null) {
+                DB::delete(prefixTable($purgeFilter['table']), '%l', $purgeFilter['where']);
+                $counter = DB::affectedRows();
 
                 // send data
                 echo prepareExchangedData(
