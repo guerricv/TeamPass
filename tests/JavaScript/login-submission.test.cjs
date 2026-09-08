@@ -1,0 +1,543 @@
+const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
+const vm = require('node:vm')
+const { test } = require('node:test')
+
+// Execute the shipped login functions and event handlers, with controlled form,
+// transport and navigation adapters. No credentials leave this process.
+const template = readFileSync(join(__dirname, '../../app/core/login.js.php'), 'utf8')
+const source = template.replace(/\r\n/g, '\n').replace(/<\?php[\s\S]*?\?>/g, php => {
+  const translation = php.match(/\$lang->get\('([^']+)'\)/)
+  return translation ? translation[1] : php.includes('echo ') ? 'null' : ''
+}).replace(/<\/?script[^>]*>/g, '')
+
+function section(start, end) {
+  const from = source.indexOf(start)
+  const to = source.indexOf(end, from)
+  assert.ok(from >= 0 && to > from, `Missing login source section: ${start}`)
+  return source.slice(from, to)
+}
+
+function createLogin() {
+  const nodes = new Map()
+  const requests = []
+  const notices = []
+  const timers = []
+  const storage = new Map()
+  const sessionStorage = new Map()
+  const navigation = { href: '', reloads: 0, reload() { this.reloads++ } }
+  let focused = null
+  let nonce = 0
+  function field(id, value = '', tag = 'input', type = 'text', classes = []) {
+    const node = { id, value, tag, type, readOnly: false, disabled: false, checked: false,
+      attrs: {}, classes: new Set(classes), handlers: {}, dataset: {} }
+    nodes.set(id, node)
+    return node
+  }
+  field('login', 'analysis5365')
+  field('pw', 'Dummy-À<&"5365', 'input', 'password', ['submit-button'])
+  field('session_duration', '60', 'input', 'text', ['submit-button'])
+  for (const id of ['ga_code', 'yubico_key', 'yubico_user_id', 'yubico_user_key',
+    '2fa_user_selection', 'duo_code', 'duo_state']) field(id, '', 'input', 'text', ['submit-button'])
+  for (const id of ['but_identify_user', 'but_login_with_oauth2', 'forgot-local-password-link',
+    'send-temporary-code']) field(id, '', 'button')
+  for (const method of ['google', 'yubico', 'duo']) {
+    field(`radio-${method}`, '', 'input', 'radio', ['2fa_selector_select']).dataset.mfa = method
+    field(`method-${method}`, method, 'button', '', ['radiosforbuttons-2fa_selector_select'])
+  }
+  field('login-box', '', 'div', '', ['login-box'])
+
+  function select(selector) {
+    if (typeof selector === 'object') return [selector]
+    return [...new Set(selector.split(',').flatMap(part => {
+      const query = part.trim()
+      if (query === 'body') return [fieldIfMissing('body')]
+      if (query.startsWith('#')) return [fieldIfMissing(query.slice(1))]
+      return [...nodes.values()].filter(node => {
+        if (query.includes(':enabled') && node.disabled) return false
+        if (query.includes(':checked') && !node.checked) return false
+        if (query.includes('input[type="radio"]')) return node.type === 'radio'
+        if (query === '.login-box button:enabled') return node.tag === 'button'
+        if (query.startsWith('input[name=2fa_selector_select]')) return node.type === 'radio'
+        const className = query.match(/^\.([\w-]+)/)
+        return className && node.classes.has(className[1])
+      })
+    }))]
+  }
+  function fieldIfMissing(id) { return nodes.get(id) || field(id, '', 'div') }
+  function collection(elements) {
+    const api = {
+      length: elements.length,
+      val(value) {
+        if (value === undefined) return elements[0]?.value
+        elements.forEach(node => { node.value = value })
+        return api
+      },
+      prop(name, value) {
+        if (value === undefined) return elements[0]?.[name]
+        elements.forEach(node => { node[name] = value })
+        return api
+      },
+      attr(name, value) {
+        elements.forEach(node => { node.attrs[name] = value })
+        return api
+      },
+      filter(selector) {
+        assert.equal(selector, ':not([readonly])')
+        return collection(elements.filter(node => !node.readOnly))
+      },
+      on(event, callback) {
+        elements.forEach(node => { node.handlers[event] = callback })
+        return api
+      },
+      off(event) { elements.forEach(node => { delete node.handlers[event] }); return api },
+      click(callback) { return api.on('click', callback) },
+      keypress(callback) { return api.on('keypress', callback) },
+      change(callback) { return api.on('change', callback) },
+      focus() { if (elements[0] && !elements[0].disabled) focused = elements[0].id; return api },
+      addClass(name) { elements.forEach(node => node.classes.add(name)); return api },
+      removeClass(name) { elements.forEach(node => node.classes.delete(name)); return api },
+      show() { elements.forEach(node => { node.hidden = false }); return api },
+      hide() { elements.forEach(node => { node.hidden = true }); return api },
+      html() { return api }, text() { return elements[0]?.value }, innerHeight() { return 900 },
+      data(name) { return elements[0]?.dataset[name] }, is() { return !!elements[0]?.checked },
+      radiosforbuttons() { return api }, index(node) { return elements.indexOf(node) },
+      eq(index) { return collection(elements.slice(index, index + 1)) }
+    }
+    return api
+  }
+  const $ = selector => collection(select(selector))
+  $.inArray = (value, array) => array.indexOf(value)
+  $.when = value => Promise.resolve(value)
+  $.post = (url, body) => {
+    let resolve, reject
+    const promise = new Promise((accept, fail) => { resolve = accept; reject = fail })
+    requests.push({ url, body, resolve, reject })
+    return promise
+  }
+  const window = { location: navigation, handlers: {} }
+  const context = vm.createContext({ $, Date, Promise, encodeURIComponent, unescape,
+    btoa: value => Buffer.from(value, 'binary').toString('base64'),
+    store: {
+      get: key => storage.get(key) ?? null,
+      set: (key, value) => storage.set(key, value), remove: key => storage.delete(key),
+      update(key, fallback, callback) { const value = storage.get(key) || fallback; callback(value); storage.set(key, value) }
+    },
+    sessionStorage: {
+      getItem: key => sessionStorage.get(key) ?? null,
+      setItem: (key, value) => sessionStorage.set(key, value), removeItem: key => sessionStorage.delete(key)
+    },
+    window, document: { location: navigation },
+    toastr: Object.fromEntries(['remove', 'info', 'error', 'warning', 'success'].map(level =>
+      [level, (...args) => notices.push({ level, args })])),
+    CreateRandomString: () => `nonce-${++nonce}`,
+    sanitizeString: value => value,
+    safeParseJSONMaybe: value => {
+      try { return { ok: true, value: JSON.parse(value) } } catch { return { ok: false, value } }
+    },
+    prepareExchangedData: (value, operation, key) => operation === 'encode'
+      ? { payload: JSON.parse(value), key } : value,
+    showModalDialogBox: () => notices.push({ level: 'refresh-dialog' }),
+    setTimeout: callback => { timers.push(callback); return timers.length },
+    setInterval: callback => { timers.push(callback); return timers.length }, clearInterval() {},
+    startAgsesAuth() {}
+  })
+  // Compile the complete template too, including code outside the exercised sections.
+  new vm.Script(source)
+  vm.runInContext(section('    var debugJavascript', '    // On page load'), context)
+  vm.runInContext(section('    function launchIdentify(', '    function renderTotpQrCode('), context)
+  vm.runInContext(source.slice(source.indexOf('    function showMFAMethodForUser(')), context)
+  context.renderTotpQrCode = () => {}
+  vm.runInContext(section('        // Click on log in button\n', '        // Relaunch authentication'), context)
+  vm.runInContext(section("    $('.submit-button').keypress", "    $(document).on('click', '#register-yubiko-key'"), context)
+  vm.runInContext(section("        $(window).on('pageshow'", '        // Manage case of oauth2 login'), context)
+
+  return {
+    context, nodes, requests, notices, timers, navigation, storage, sessionStorage,
+    get focused() { return focused },
+    launch: (...args) => context.launchIdentify(false, '', '', ...args),
+    enter(keyCode = 13) {
+      let prevented = false
+      nodes.get('pw').handlers.keypress({ keyCode, preventDefault() { prevented = true } })
+      assert.equal(prevented, keyCode === 10 || keyCode === 13)
+    },
+    click(id = 'but_identify_user') { nodes.get(id).handlers.click() },
+    busy(expected) {
+      assert.equal(nodes.get('but_identify_user').disabled, expected)
+      assert.equal(nodes.get('pw').readOnly, expected)
+      assert.equal(context.loginInProgress, expected)
+      assert.equal(nodes.get('login-box').attrs['aria-busy'], String(expected))
+    }
+  }
+}
+
+const flush = () => new Promise(resolve => setImmediate(resolve))
+const refusal = { error: true, message: 'Denied', primary_auth_failed: true }
+function success(request, overrides = {}) {
+  return { error: false, value: request.body.data.payload.randomstring, user_admin: 0,
+    initial_url: '', session_key: 'authenticated-key', ...overrides }
+}
+async function askForMfa(app, method) {
+  app.launch()
+  await flush()
+  app.requests.at(-1).resolve({ value: '2fa_not_set', error: '2fa_not_set',
+    mfa_methods: { mfa_required: true, [method]: true } })
+  await flush()
+  app.busy(false)
+}
+
+test('rapid Enter, click and YubiKey events share one pending submission', async () => {
+  const app = createLogin()
+  app.enter()
+  app.busy(true)
+  app.enter(10)
+  app.click()
+  app.nodes.get('yubico_key').handlers.change({ preventDefault() {} })
+  app.click('but_login_with_oauth2')
+  await flush()
+  assert.equal(app.requests.length, 1)
+  assert.equal(app.navigation.href, '')
+  const payload = app.requests[0].body.data.payload
+  assert.equal(payload.login, 'analysis5365')
+  assert.equal(Buffer.from(payload.pw, 'base64').toString('utf8'), app.nodes.get('pw').value)
+  assert.equal(app.nodes.get('session_duration').readOnly, true)
+  app.requests[0].resolve(refusal)
+  await flush()
+  app.busy(false)
+  app.enter()
+  await flush()
+  assert.equal(app.requests.length, 2)
+})
+
+test('empty credentials and non-Enter keys do not lock or submit the form', async () => {
+  const app = createLogin()
+  app.enter(65)
+  app.nodes.get('pw').value = ''
+  assert.equal(app.launch(), false)
+  await flush()
+  assert.equal(app.context.loginInProgress, false)
+  assert.equal(app.nodes.get('but_identify_user').disabled, false)
+  assert.equal(app.requests.length, 0)
+})
+
+test('controls already read-only or disabled retain their initial state', async () => {
+  const app = createLogin()
+  app.nodes.get('login').readOnly = true
+  app.nodes.get('send-temporary-code').disabled = true
+  app.launch()
+  await flush()
+  app.requests[0].resolve(refusal)
+  await flush()
+  app.busy(false)
+  assert.equal(app.nodes.get('login').readOnly, true)
+  assert.equal(app.nodes.get('send-temporary-code').disabled, true)
+})
+
+for (const error of ['network', 'HTTP 500', 'timeout']) {
+  test(`${error} failure releases the form and allows an immediate retry`, async () => {
+    const app = createLogin()
+    app.launch()
+    await flush()
+    app.requests[0].reject(new Error(error))
+    await flush()
+    app.busy(false)
+    assert.ok(app.notices.some(notice => notice.level === 'error'))
+    app.launch()
+    await flush()
+    assert.equal(app.requests.length, 2)
+  })
+}
+
+for (const response of [refusal, { error: 'maintenance_mode_enabled' },
+  { error: true, extra: 'ad_user_created' }, { error: true, extra: 'oauth2_user_created' },
+  { error: true, extra: 'oauth2_user_not_found', primary_auth_failed: true }, null]) {
+  test(`terminal response releases the form: ${JSON.stringify(response)}`, async () => {
+    const app = createLogin()
+    app.launch()
+    await flush()
+    app.requests[0].resolve(response)
+    await flush()
+    app.busy(false)
+  })
+}
+
+test('a synchronous encryption exception releases the form', async () => {
+  const app = createLogin()
+  app.context.prepareExchangedData = () => { throw new Error('Encode failure') }
+  app.launch()
+  await flush()
+  app.busy(false)
+  assert.equal(app.requests.length, 0)
+  assert.ok(app.notices.some(notice => notice.level === 'error'))
+})
+
+for (const alreadyRetried of [false, true]) {
+  test(`decode failure ${alreadyRetried ? 'reports an error' : 'keeps the reload locked'}`, async () => {
+    const app = createLogin()
+    if (alreadyRetried) app.sessionStorage.set('teampassKeyResyncDone', '1')
+    const prepare = app.context.prepareExchangedData
+    app.context.prepareExchangedData = (value, operation, key) => {
+      if (operation === 'decode') throw new Error('Decode failure')
+      return prepare(value, operation, key)
+    }
+    app.launch()
+    await flush()
+    app.requests[0].resolve('bad response')
+    await flush()
+    app.busy(!alreadyRetried)
+    assert.equal(app.navigation.reloads, alreadyRetried ? 0 : 1)
+    assert.ok(!JSON.stringify([...app.storage]).includes('Dummy-'))
+  })
+}
+
+for (const [overrides, url] of [
+  [{}, './index.php?page=items'], [{ user_admin: 1 }, './index.php?page=admin'],
+  [{ initial_url: './index.php?page=items&group=1' }, './index.php?page=items&group=1']
+]) {
+  test(`successful login stays locked until navigation: ${url}`, async () => {
+    const app = createLogin()
+    app.launch()
+    await flush()
+    app.requests[0].resolve(success(app.requests[0], overrides))
+    await flush()
+    app.busy(true)
+    app.enter()
+    assert.equal(app.requests.length, 1)
+    assert.equal(app.navigation.href, url)
+    assert.ok(!JSON.stringify([...app.storage]).includes('Dummy-'))
+  })
+}
+
+for (const method of ['google', 'yubico', 'duo']) {
+  test(`${method} challenge unlocks the next factor and guards its submission`, async () => {
+    const app = createLogin()
+    await askForMfa(app, method)
+    assert.equal(app.nodes.get('2fa_user_selection').value, method)
+    if (method !== 'duo') assert.equal(app.focused, method === 'google' ? 'ga_code' : 'yubico_key')
+    app.nodes.get('ga_code').value = '123456'
+    app.nodes.get('yubico_key').value = 'dummy-otp'
+    app.enter()
+    app.click()
+    await flush()
+    assert.equal(app.requests.length, 2)
+    assert.equal(app.requests[1].body.data.payload.user_2fa_selection, method)
+    app.busy(true)
+    app.requests[1].resolve({ error: true, ga_bad_code: true, message: 'Wrong second factor' })
+    await flush()
+    app.busy(false)
+    app.nodes.get('yubico_key').value = 'next-dummy-otp'
+    app.enter()
+    await flush()
+    assert.equal(app.requests[2].body.data.payload.user_2fa_selection, method)
+  })
+}
+
+test('missing YubiKey input releases a locally rejected attempt', async () => {
+  const app = createLogin()
+  await askForMfa(app, 'yubico')
+  app.launch()
+  await flush()
+  app.busy(false)
+  assert.equal(app.requests.length, 1)
+})
+
+test('MFA method buttons cannot change the selected factor during submission', async () => {
+  const app = createLogin()
+  app.launch()
+  await flush()
+  app.requests[0].resolve({ error: '2fa_not_set', mfa_methods: { mfa_required: true, google: true, duo: true } })
+  await flush()
+  const googleButton = app.nodes.get('method-google')
+  googleButton.handlers.click.call(googleButton)
+  app.nodes.get('ga_code').value = '123456'
+  app.launch()
+  const duoButton = app.nodes.get('method-duo')
+  duoButton.handlers.click.call(duoButton)
+  await flush()
+  assert.equal(app.requests[1].body.data.payload.user_2fa_selection, 'google')
+})
+
+test('first Google enrollment leaves the code input usable', async () => {
+  const app = createLogin()
+  await askForMfa(app, 'google')
+  app.nodes.get('ga_code').value = 'temporary-code'
+  app.launch()
+  await flush()
+  app.requests[1].resolve({ error: false, mfaStatus: 'ga_temporary_code_correct', qr_text: 'dummy-uri' })
+  await flush()
+  app.busy(false)
+  assert.equal(app.nodes.get('ga_code').value, '')
+  assert.equal(app.focused, 'ga_code')
+})
+
+test('Duo remains locked during its delayed redirect', async () => {
+  const app = createLogin()
+  await askForMfa(app, 'duo')
+  app.launch()
+  await flush()
+  assert.equal(app.requests[1].body.data.payload.duo_status, 'start_duo_auth')
+  app.requests[1].resolve({ error: false, duo_url_ready: true, duo_redirect_url: 'https://example.test/duo' })
+  await flush()
+  app.busy(true)
+  app.enter()
+  assert.equal(app.requests.length, 2)
+  app.timers[0]()
+  assert.equal(app.navigation.href, 'https://example.test/duo')
+})
+
+test('Duo callback can submit empty displayed credentials and recover from failure', async () => {
+  const app = createLogin()
+  app.nodes.get('login').value = ''
+  app.nodes.get('pw').value = ''
+  app.nodes.get('duo_code').value = 'dummy-code'
+  app.nodes.get('duo_state').value = 'dummy-state'
+  app.context.launchIdentify(true, '', '')
+  app.enter()
+  await flush()
+  assert.equal(app.requests.length, 1)
+  assert.equal(app.requests[0].body.data.payload.duo_code, 'dummy-code')
+  app.requests[0].resolve(refusal)
+  await flush()
+  app.busy(false)
+  assert.equal(app.nodes.get('login').disabled, false)
+})
+
+test('OAuth2 navigation shares the guard, even with empty credentials', async () => {
+  const app = createLogin()
+  app.nodes.get('pw').value = ''
+  app.click('but_login_with_oauth2')
+  app.enter()
+  app.busy(true)
+  await flush()
+  assert.equal(app.requests.length, 0)
+  assert.equal(app.navigation.href, 'includes/core/login.oauth2.php')
+})
+
+test('returning to a cached provider redirect page resynchronizes the server session', () => {
+  const app = createLogin()
+  app.context.window.handlers.pageshow({ originalEvent: { persisted: true } })
+  assert.equal(app.navigation.reloads, 0)
+  app.click('but_login_with_oauth2')
+  app.context.window.handlers.pageshow({ originalEvent: { persisted: false } })
+  assert.equal(app.navigation.reloads, 0)
+  app.context.window.handlers.pageshow({ originalEvent: { persisted: true } })
+  assert.equal(app.navigation.reloads, 1)
+})
+
+test('a repeated button event cannot clear a pending OAuth2 callback context', async () => {
+  const app = createLogin()
+  app.storage.set('userOauth2Info', { login: 'oauth-user', oauth2LoginOngoing: true })
+  app.launch()
+  app.click()
+  await flush()
+  assert.equal(app.requests[0].body.data.payload.oauth2LoginOngoing, true)
+  assert.equal(app.requests[0].body.login, 'oauth-user')
+})
+
+test('session renewal and credential replay remain one locked attempt', async () => {
+  const app = createLogin()
+  app.launch()
+  await flush()
+  const original = app.requests[0].body.data.payload
+  app.requests[0].resolve('ERROR SESSION EXPIRED')
+  await flush()
+  app.busy(true)
+  assert.equal(app.requests[1].body.type, 'refresh_session_key')
+  app.enter()
+  app.click()
+  assert.equal(app.requests.length, 2)
+  app.requests[1].resolve(JSON.stringify({ key: 'renewed-key' }))
+  await flush()
+  app.busy(true)
+  assert.equal(app.requests.length, 3)
+  assert.deepEqual(app.requests[2].body.data.payload, original)
+  assert.equal(app.requests[2].body.data.key, 'renewed-key')
+  app.requests[2].resolve(refusal)
+  await flush()
+  app.busy(false)
+})
+
+for (const failure of ['network', 'null', '{}', '{"key":123}', '{"key":""}']) {
+  test(`failed key recovery keeps the refresh dialog locked: ${failure}`, async () => {
+    const app = createLogin()
+    app.launch()
+    await flush()
+    app.requests[0].resolve('ERROR SESSION EXPIRED')
+    await flush()
+    if (failure === 'network') app.requests[1].reject(new Error('Network failure'))
+    else app.requests[1].resolve(failure)
+    await flush()
+    app.busy(true)
+    assert.ok(app.notices.some(notice => notice.level === 'refresh-dialog'))
+    app.enter()
+    assert.equal(app.requests.length, 2)
+  })
+}
+
+test('a second stale response opens the refresh dialog instead of looping', async () => {
+  const app = createLogin()
+  app.launch()
+  await flush()
+  app.requests[0].resolve('ERROR SESSION EXPIRED')
+  await flush()
+  app.requests[1].resolve('{"key":"renewed-key"}')
+  await flush()
+  app.requests[2].resolve('ERROR SESSION EXPIRED')
+  await flush()
+  app.busy(true)
+  assert.equal(app.requests.length, 3)
+  assert.ok(app.notices.some(notice => notice.level === 'refresh-dialog'))
+})
+
+for (const valid of [true, false]) {
+  test(`login waits for an earlier focus check (session valid: ${valid})`, async () => {
+    const app = createLogin()
+    app.context.lastSessionKeyCheck = 0
+    app.context.checkSessionKeyFreshness()
+    app.launch()
+    assert.ok(app.notices.some(notice => notice.level === 'info'))
+    app.enter()
+    await flush()
+    assert.equal(app.requests.length, 1)
+    app.requests[0].resolve(JSON.stringify({ valid }))
+    await flush()
+    if (!valid) {
+      assert.equal(app.requests[1].body.type, 'refresh_session_key')
+      app.busy(true)
+      app.requests[1].resolve('{"key":"focus-renewed-key"}')
+      await flush()
+    }
+    const request = app.requests.at(-1)
+    assert.equal(request.body.type, 'identify_user')
+    if (!valid) assert.equal(request.body.data.key, 'focus-renewed-key')
+    app.context.checkSessionKeyFreshness()
+    assert.equal(app.requests.length, valid ? 2 : 3)
+    request.resolve(refusal)
+    await flush()
+    app.busy(false)
+  })
+}
+
+test('a failed background renewal cannot submit behind the refresh dialog', async () => {
+  const app = createLogin()
+  app.context.lastSessionKeyCheck = 0
+  app.context.checkSessionKeyFreshness()
+  app.launch()
+  app.requests[0].resolve('{"valid":false}')
+  await flush()
+  app.requests[1].reject(new Error('Network failure'))
+  await flush()
+  app.busy(true)
+  assert.equal(app.requests.length, 2)
+})
+
+test('a failed background validity check still allows credential submission', async () => {
+  const app = createLogin()
+  app.context.lastSessionKeyCheck = 0
+  app.context.checkSessionKeyFreshness()
+  app.launch()
+  app.requests[0].reject(new Error('Network failure'))
+  await flush()
+  assert.equal(app.requests[1].body.type, 'identify_user')
+})
