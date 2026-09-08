@@ -1122,6 +1122,14 @@ class ItemController extends BaseController
                                 if (!$hasAccess) {
                                     $strErrorDesc = 'Access denied to this item';
                                     $strErrorHeader = 'HTTP/1.1 403 Forbidden';
+                                } elseif ($folderAccessModel->satisfiesItemRestriction($itemId, (int) $userData['id']) === false) {
+                                    // Narrowed to a subset of users/roles the caller is not in.
+                                    // The web refuses the whole update_item handler in that case;
+                                    // without this the API let an excluded user overwrite the
+                                    // secret, and the sharekey fan-out then handed them the new
+                                    // value (GHSA-gxc6-rgv6-wx99).
+                                    $strErrorDesc = 'Access denied to this item';
+                                    $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                                 } elseif ($folderAccessModel->canEditInFolder((int) $itemInfo['id_tree'], (int) $userData['id']) === false) {
                                     // Blocks R (read-only) as well as NE / NDNE (no edit)
                                     $strErrorDesc = 'Access denied: you are not allowed to edit items in this folder';
@@ -1282,6 +1290,12 @@ class ItemController extends BaseController
                                 );
 
                                 if (!$hasAccess) {
+                                    $strErrorDesc = 'Access denied to this item';
+                                    $strErrorHeader = 'HTTP/1.1 403 Forbidden';
+                                } elseif ($folderAccessModel->satisfiesItemRestriction($itemId, (int) $userData['id']) === false) {
+                                    // Same denial the web applies through getCurrentAccessRights().
+                                    // Checked before the idempotency reservation, so a refused
+                                    // delete never consumes the caller's key.
                                     $strErrorDesc = 'Access denied to this item';
                                     $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                                 } elseif ($folderAccessModel->canDeleteInFolder((int) $itemInfo['id_tree'], (int) $userData['id']) === false) {

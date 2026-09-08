@@ -317,6 +317,8 @@ The password guard compares against the **decrypted** current value, so resendin
 
 **Error bodies:** validation failures (`InvalidArgumentException` / `UnexpectedValueException`) return their message with `422`. Every other internal failure returns a generic `500` — the exception message is written to the server log only, never to the client.
 
+**Item-level restriction:** a caller outside the item's `restricted_to` / `restriction_to_roles` subset gets `403` and **nothing is written**, mirroring the web `update_item` handler, which refuses in the same case. This matters beyond confidentiality: a password written by an excluded user is then redistributed to every folder member by the sharekey fan-out.
+
 **Permissions:** `allowed_to_update`. Source folder must not be read-only. If `folder_id` changes (move), **target folder** must also not be read-only for the user.
 
 ---
@@ -342,6 +344,8 @@ The same key with another item or revision returns `409`; an in-progress request
 revision/date pair is the deletion revision later exposed by `GET /item/changes`.
 
 **LAPR:** `409` while the item is still referenced by a non-deleted managed account or enrolled endpoint — remove the managed account or reconfigure the endpoint first. The relationship has no FK, so deleting the item would orphan it and break rotation or endpoint authentication. Inactive when the LAPR module is disabled.
+
+**Item-level restriction:** a caller outside the item's `restricted_to` / `restriction_to_roles` subset gets `403`. It is evaluated before the `Idempotency-Key` reservation, so a refused delete never consumes the key, and again under the item row lock inside the transaction so a concurrent restriction change cannot slip through.
 
 **Permissions:** `allowed_to_delete`. Blocked with 403 if folder is read-only.
 
@@ -482,7 +486,7 @@ The key is `extension_url` (value = `cpassman_url`) — the doc previously named
 | 201 | Resource created (`item/create` adds a `Location` header) |
 | 400 | Missing or invalid parameters |
 | 401 | `"Missing Authorization header"` — no bearer token received (check webserver vhost passes Authorization on GET). `"Invalid or expired token"` — token present but rejected (bad signature, expired, malformed). Match on HTTP 401 status rather than the body string. |
-| 403 | Permission denied (folder read-only, admin required, CRUD rights missing) |
+| 403 | Permission denied (folder read-only, admin required, CRUD rights missing, caller outside the item's `restricted_to` / `restriction_to_roles` subset) |
 | 404 | Resource not found / unknown route |
 | 405 | HTTP method not supported for this endpoint (`Allow:` header lists supported methods) |
 | 409 | The supplied `revision` no longer matches the item (`item/update` or `item/delete`), an idempotency key was reused with another request or is still processing, the resource changed while the request was being processed (concurrent personal→shared item move), or the operation conflicts with a LAPR relationship (managed login/password update, move to a personal folder, delete of a linked item) |

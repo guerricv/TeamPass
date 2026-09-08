@@ -163,6 +163,58 @@ class ItemRestrictionEnforcementTest extends TestCase
         self::assertStringContainsString("getItemRestrictionSqlConstraint('i'", $body);
     }
 
+    public function testUpdateDeniesARestrictedCallerBeforeAnyWrite(): void
+    {
+        $body = $this->methodBody($this->itemControllerSource(), 'public function updateAction(');
+
+        $folderCheck = strpos($body, 'canAccessItemInFolder(');
+        $restrictionCheck = strpos($body, 'satisfiesItemRestriction(');
+        $update = strpos($body, '->updateItem(');
+
+        self::assertIsInt($folderCheck);
+        self::assertIsInt($restrictionCheck);
+        self::assertIsInt($update);
+        self::assertLessThan($restrictionCheck, $folderCheck);
+        self::assertLessThan(
+            $update,
+            $restrictionCheck,
+            'The restriction must be evaluated before the item is written'
+        );
+    }
+
+    public function testDeleteDeniesARestrictedCallerBeforeReservingTheIdempotencyKey(): void
+    {
+        $body = $this->methodBody($this->itemControllerSource(), 'public function deleteAction(');
+
+        $restrictionCheck = strpos($body, 'satisfiesItemRestriction(');
+        $reservation = strpos($body, '$idempotencyModel->reserve(');
+
+        self::assertIsInt($restrictionCheck);
+        self::assertIsInt($reservation);
+        self::assertLessThan(
+            $reservation,
+            $restrictionCheck,
+            'A refused delete must not consume the caller Idempotency-Key'
+        );
+    }
+
+    public function testDeleteModelRepeatsTheRestrictionUnderTheRowLock(): void
+    {
+        $body = $this->methodBody($this->itemModelSource(), 'public function deleteItem(');
+
+        // The controller decides before the lock; a concurrent restriction change between the
+        // two must not slip through, exactly like the folder re-check next to it.
+        $lock = strpos($body, 'FOR UPDATE');
+        $restrictionCheck = strpos($body, 'satisfiesItemRestriction(');
+        $softDelete = strpos($body, "'inactif' => '1'");
+
+        self::assertIsInt($lock);
+        self::assertIsInt($restrictionCheck);
+        self::assertIsInt($softDelete);
+        self::assertLessThan($restrictionCheck, $lock);
+        self::assertLessThan($softDelete, $restrictionCheck);
+    }
+
     public function testGetOtpDeniesARestrictedCallerAfterTheFolderCheck(): void
     {
         $body = $this->methodBody($this->itemControllerSource(), 'public function getOtpAction(');

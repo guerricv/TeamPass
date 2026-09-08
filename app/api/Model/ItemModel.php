@@ -2302,6 +2302,9 @@ class ItemModel
             ) === false || $folderAccessModel->canDeleteInFolder(
                 (int) $currentItem['id_tree'],
                 (int) $userData['id']
+            ) === false || $folderAccessModel->satisfiesItemRestriction(
+                $itemId,
+                (int) $userData['id']
             ) === false) {
                 DB::rollback();
                 return [
