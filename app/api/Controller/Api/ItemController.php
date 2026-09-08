@@ -245,7 +245,7 @@ class ItemController extends BaseController
                     $arrItems = $itemModel->getItems($sqlExtra, $intLimit, $userPrivateKey, $userData['id'], false, $intOffset);
                     // Empty collection → 200 + [] (a 204 must not carry a body — RFC 9110)
                     $responseData = json_encode($arrItems);
-                    $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra);
+                    $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra, [], (int) $userData['id']);
                 }
             } catch (Error $e) {
                 error_log('ItemController::inFoldersAction error: ' . $e->getMessage());
@@ -570,7 +570,7 @@ class ItemController extends BaseController
                     $responseData = json_encode($arrItems);
                     // Pagination contract only applies to searches (a get-by-id is a single resource)
                     if ($showItem === false) {
-                        $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra, $sqlParams);
+                        $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra, $sqlParams, (int) $userData['id']);
                     }
                 }
             } catch (Error $e) {
@@ -708,6 +708,11 @@ class ItemController extends BaseController
                 $itemVisibilitySql .= ' OR i.id IN (' . $safeRestricted . ')';
             }
             $itemVisibilitySql .= ')' . $folderAccessModel->getItemFolderSqlConstraint('i.id_tree', (int) $userData['id']);
+            // An item the caller has been restricted from is no longer visible to them. Applying
+            // the predicate to the visibility clause — not only to the payload — is what makes the
+            // delta report it as removed/out_of_scope, so an offline client drops its cached copy
+            // instead of keeping a secret the server has stopped serving.
+            $itemVisibilitySql .= $folderAccessModel->getItemRestrictionSqlConstraint('i', (int) $userData['id']);
 
             $changes = $itemModel->getItemChanges(
                 $since,
@@ -780,6 +785,9 @@ class ItemController extends BaseController
                 $sql_constraint .= ' OR i.id IN (' . $safeRestrictedFbu . ')';
             }
             $sql_constraint .= ')' . $folderAccessModel->getItemFolderSqlConstraint('i.id_tree', (int) $userData['id']);
+            // This endpoint builds its own query instead of going through getItems(), so the
+            // item-level restriction has to be applied here too.
+            $sql_constraint .= $folderAccessModel->getItemRestrictionSqlConstraint('i', (int) $userData['id']);
 
             // Decode URL and escape LIKE metacharacters to prevent wildcard injection
             $searchUrl = urldecode($arrQueryStringParams['url']);
@@ -921,6 +929,11 @@ class ItemController extends BaseController
                     );
 
                     if (!$hasAccess) {
+                        $strErrorDesc = 'Access denied to this item';
+                        $strErrorHeader = 'HTTP/1.1 403 Forbidden';
+                    } elseif ($folderAccessModel->satisfiesItemRestriction($itemId, (int) $userData['id']) === false) {
+                        // The item was narrowed to a subset of users/roles the caller is not in.
+                        // Same denial the web applies before releasing a TOTP code.
                         $strErrorDesc = 'Access denied to this item';
                         $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                     } else {

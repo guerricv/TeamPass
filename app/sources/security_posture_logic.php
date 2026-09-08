@@ -35,6 +35,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/item_restriction_logic.php';
+
 if (function_exists('securityPostureResolveAuthorizedFolders') === false) {
     /**
      * Resolve the folders a user may read, from the raw grant/denial sets.
@@ -91,34 +93,27 @@ if (function_exists('securityPostureResolveAuthorizedFolders') === false) {
     /**
      * Split a semicolon-separated id list into positive integers.
      *
+     * Thin alias over itemRestrictionParseIdList() (item_restriction_logic.php), kept for the
+     * existing Security Posture callers.
+     *
      * @param string|null $list Raw column value (e.g. items.restricted_to).
      *
      * @return int[] Ids found in the list, empty when there is none.
      */
     function securityPostureParseIdList(?string $list): array
     {
-        if ($list === null || trim($list) === '') {
-            return [];
-        }
-
-        $ids = [];
-        foreach (explode(';', $list) as $chunk) {
-            $chunk = trim($chunk);
-            if ($chunk !== '' && ctype_digit($chunk) === true && (int) $chunk > 0) {
-                $ids[] = (int) $chunk;
-            }
-        }
-
-        return array_values(array_unique($ids));
+        return itemRestrictionParseIdList($list);
     }
 
     /**
      * Decide whether a user satisfies an item's own restrictions.
      *
-     * Item restrictions only ever narrow folder access; they never grant access to a folder the
-     * user cannot read. An item carrying no restriction at all is open to every folder member.
+     * Thin alias over itemRestrictionAllows() (item_restriction_logic.php), which is the single
+     * canonical implementation shared by the web, the API and Security Posture. Keeping one copy
+     * is the point: the web and the API had drifted apart on exactly this rule
+     * (GHSA-gxc6-rgv6-wx99).
      *
-     * The manager_edit derogation (items.queries.php) is intentionally NOT reproduced here:
+     * The manager_edit derogation (items.queries.php) is intentionally not reproduced there:
      * Security Posture reports the credentials a user holds in their own right, not the ones they
      * can reach through a management override.
      *
@@ -135,21 +130,7 @@ if (function_exists('securityPostureResolveAuthorizedFolders') === false) {
         int $userId,
         array $userRoleIds
     ): bool {
-        $restrictedUsers = securityPostureParseIdList($restrictedTo);
-        $restrictedRoles = array_values(array_unique(array_map('intval', $itemRestrictedRoleIds)));
-
-        // No restriction of any kind -> open to every folder member.
-        if (count($restrictedUsers) === 0 && count($restrictedRoles) === 0) {
-            return true;
-        }
-
-        if (in_array($userId, $restrictedUsers, true) === true) {
-            return true;
-        }
-
-        $heldRoles = array_map('intval', $userRoleIds);
-
-        return count(array_intersect($restrictedRoles, $heldRoles)) > 0;
+        return itemRestrictionAllows($restrictedTo, $itemRestrictedRoleIds, $userId, $userRoleIds);
     }
 
     /**

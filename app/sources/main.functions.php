@@ -52,6 +52,7 @@ use TeampassClasses\EmailService\EmailSettings;
 use TeampassClasses\CryptoManager\CryptoManager;
 
 require_once __DIR__ . '/otp.functions.php';
+require_once __DIR__ . '/item_restriction_logic.php';
 require_once __DIR__ . '/security_posture_logic.php';
 require_once __DIR__ . '/operational_statistics_logic.php';
 require_once __DIR__ . '/log_display_logic.php';
@@ -1394,28 +1395,16 @@ function securityPostureItemAccessSql(int $userId, string $itemAlias = 'i'): str
         return '(1 = 0)';
     }
 
-    $restrictionTable = prefixTable('restriction_to_roles');
-    $userRoleIds = securityPostureUserRoleIds($userId);
-
-    $roleRestrictionClause = '';
-    if (count($userRoleIds) > 0) {
-        $roleRestrictionClause = ' OR EXISTS (SELECT 1 FROM ' . $restrictionTable
-            . ' AS posture_restricted_role'
-            . ' WHERE posture_restricted_role.item_id = ' . $itemAlias . '.id'
-            . ' AND posture_restricted_role.role_id IN (' . implode(',', $userRoleIds) . '))';
-    }
-
-    // Everything interpolated below is an int-cast id or the validated table alias. The LIKE
-    // pattern carries no MeekroDB placeholder ('%;' and ';%' are not in its parameter map).
+    // The per-item restriction half is the canonical predicate shared with the REST API
+    // (item_restriction_logic.php); only the folder set below is posture-specific.
     return '(' . $itemAlias . '.id_tree IN (' . implode(',', $authorizedFolders) . ')'
-        . ' AND ('
-        . '(COALESCE(' . $itemAlias . '.restricted_to, \'\') = \'\''
-        . ' AND NOT EXISTS (SELECT 1 FROM ' . $restrictionTable . ' AS posture_any_restricted_role'
-        . ' WHERE posture_any_restricted_role.item_id = ' . $itemAlias . '.id))'
-        . ' OR CONCAT(\';\', COALESCE(' . $itemAlias . '.restricted_to, \'\'), \';\')'
-        . ' LIKE \'%;' . $userId . ';%\''
-        . $roleRestrictionClause
-        . '))';
+        . ' AND ' . itemRestrictionSqlPredicate(
+            $userId,
+            securityPostureUserRoleIds($userId),
+            $itemAlias,
+            prefixTable('restriction_to_roles')
+        )
+        . ')';
 }
 
 

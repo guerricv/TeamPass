@@ -157,7 +157,7 @@ class SecurityPostureAuthorizationTest extends TestCase
     {
         $source = $this->mainFunctionsSource();
         $folderScope = strpos($source, ".id_tree IN (' . implode(',', \$authorizedFolders)");
-        $restrictionScope = strpos($source, 'posture_any_restricted_role.item_id');
+        $restrictionScope = strpos($source, 'itemRestrictionSqlPredicate(');
 
         self::assertIsInt($folderScope);
         self::assertIsInt($restrictionScope);
@@ -167,7 +167,13 @@ class SecurityPostureAuthorizationTest extends TestCase
             'Folder scoping must be applied before the item restriction clause'
         );
         self::assertStringContainsString("prefixTable('restriction_to_roles')", $source);
-        self::assertStringContainsString('COALESCE(\' . $itemAlias . \'.restricted_to', $source);
+
+        // The restriction half itself is the canonical predicate, shared with the REST API so
+        // the two enforcement paths cannot drift apart again (GHSA-gxc6-rgv6-wx99).
+        $logic = $this->source('app/sources/item_restriction_logic.php');
+        self::assertStringContainsString('function itemRestrictionSqlPredicate(', $logic);
+        self::assertStringContainsString('tp_any_restricted_role.item_id', $logic);
+        self::assertStringContainsString('COALESCE(\' . $itemAlias . \'.restricted_to', $logic);
     }
 
     public function testDashboardNeverUsesTheLegacyPersonalOnlyGuard(): void

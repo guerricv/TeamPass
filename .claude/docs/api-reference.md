@@ -166,6 +166,8 @@ the current revision in the prunable journal. Returned everywhere `revision` is 
 
 **Permissions:** `allowed_to_read`. Uses folder access constraint — IDOR protection via sharekey (item skipped if no sharekey found for user).
 
+**Item-level restriction:** an item narrowed after creation to a subset of users (`items.restricted_to`) or of roles (`restriction_to_roles`) is **omitted** for a caller outside that subset, exactly like the web refuses to open it. Folder membership and the presence of a sharekey do not express the restriction — narrowing an item never revokes the sharekey an excluded user already holds — so this is a distinct check, enforced at the single read choke point `ItemModel::getItems()` and therefore shared by `item/get`, `item/inFolders` and `item/changes`. The `manager_edit` derogation is **not** honoured: it only ever widened the item card on the web, never the password itself. `X-Total-Count` counts the same predicate.
+
 **LIKE search:** `label` and `description` params trigger a `LIKE %value%` search. The `%` and `_` characters in the input are escaped to prevent LIKE injection.
 
 ---
@@ -176,7 +178,7 @@ Get items in one or more folders.
 
 **Params:** `folders` (comma-separated or JSON array of folder IDs), optional `limit` (default unlimited, max 500) and `offset` (default 0; forces `limit=50` if no limit given). Returns `X-Total-Count`; empty result → `200` + `[]`.
 
-**Permissions:** `allowed_to_read`.
+**Permissions:** `allowed_to_read` + the item-level restriction described under `item/get`.
 
 ---
 
@@ -188,7 +190,7 @@ Find items by URL match.
 
 **Response:** array of `{ id, revision, revision_changed_at, label, login, url, folder_id, has_otp, favicon_url }`. Empty result → `200` + `[]`.
 
-**Permissions:** `allowed_to_read`.
+**Permissions:** `allowed_to_read` + the item-level restriction described under `item/get` (this endpoint builds its own query, so the predicate is applied there).
 
 ---
 
@@ -205,7 +207,7 @@ Get current TOTP code for an item.
 
 **Error codes:** 400 (missing id), 403 (access denied / OTP not enabled), 404 (item not found / OTP not configured), 500 (decrypt failed).
 
-**Permissions:** `allowed_to_read` + folder access + item-level restriction check.
+**Permissions:** `allowed_to_read` + folder access + item-level restriction check (`403` when the caller is outside `restricted_to` / `restriction_to_roles`; evaluated **before** the TOTP secret is decrypted).
 
 ---
 
@@ -224,6 +226,8 @@ Delta feed for offline clients (mobile vault). Answers "what must I apply since 
 **The journal is the scan target, not `items`** — it is the only place where a hard-deleted item, or one that left the caller's folders, still leaves a trace. `items_revisions.previous_folder_id` (set on move) is what makes `out_of_scope` detectable without leaking any item id the caller never had access to.
 
 **Rule: the cursor stops before an undeliverable change.** An item whose sharekeys are still being distributed by the background task is visible but not readable; advancing past it would hide it from that client permanently. `has_more` stays true and it is offered again.
+
+**Rule: an item the caller has been restricted from leaves as a tombstone, not as a hole.** The item-level restriction is applied to the delta's *visibility* clause, not only to its payload, so narrowing an item reports it once in `removed` with `reason: out_of_scope` and the offline client drops its cached copy. Applying it to the payload alone would leave the item permanently "visible but undeliverable" and freeze the cursor.
 
 **Not covered:** losing access to a whole folder produces **no** journal entry (nothing changed on the items). Clients must also reconcile against `folder/writableFolders` and drop cached items whose folder disappeared.
 

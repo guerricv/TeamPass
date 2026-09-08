@@ -94,6 +94,15 @@ class ItemModel
         $SETTINGS = $configManager->getAllSettings();
         $itemExtraFields = isset($SETTINGS['item_extra_fields']) && (int) $SETTINGS['item_extra_fields'] === 1;
 
+        // Item-level restriction (items.restricted_to / restriction_to_roles). Applied here
+        // rather than in each controller because every API read path funnels through this
+        // method: item/get, item/inFolders and item/changes. Neither folder membership nor the
+        // presence of a sharekey expresses the restriction — restricting an item leaves the
+        // excluded user's sharekey in place — so without this the API returned the plaintext
+        // password of an item the web refused to open (GHSA-gxc6-rgv6-wx99).
+        $folderAccessModel = new FolderAccessModel();
+        $itemRestrictionSql = $folderAccessModel->getItemRestrictionSqlConstraint('i', $userId);
+
         // Get items
         $rows = DB::query(
             "SELECT i.id, i.label, i.description, i.pw, i.pw_iv, i.url, i.id_tree, i.login, i.email,
@@ -110,7 +119,7 @@ class ItemModel
             FROM " . prefixTable('items') . " AS i
             LEFT JOIN " . prefixTable('nested_tree') . " AS t ON (t.id = i.id_tree)
             LEFT JOIN " . prefixTable('items_otp') . " AS io ON (io.item_id = i.id)".
-            $sqlExtra .
+            $sqlExtra . $itemRestrictionSql .
             " ORDER BY i.id ASC" .
             ($limit > 0 ? " LIMIT " . ($offset > 0 ? $offset . ", " : "") . $limit : ''),
             ...$sqlParams
@@ -246,13 +255,22 @@ class ItemModel
      * @param string $sqlExtra WHERE clause referencing the 'i' items alias only,
      *                         may contain MeekroDB placeholders (%s, ...)
      * @param array $sqlParams Values bound to the placeholders in $sqlExtra, in order
+     * @param int|null $userId Current user; when given, the same item-level restriction
+     *                         predicate getItems() applies is counted too, so the total
+     *                         cannot advertise items the caller is restricted from
      *
      * @return int
      */
-    public function countItems(string $sqlExtra, array $sqlParams = []): int
+    public function countItems(string $sqlExtra, array $sqlParams = [], ?int $userId = null): int
     {
+        $itemRestrictionSql = '';
+        if ($userId !== null) {
+            $folderAccessModel = new FolderAccessModel();
+            $itemRestrictionSql = $folderAccessModel->getItemRestrictionSqlConstraint('i', $userId);
+        }
+
         return (int) DB::queryFirstField(
-            'SELECT COUNT(*) FROM ' . prefixTable('items') . ' AS i ' . $sqlExtra,
+            'SELECT COUNT(*) FROM ' . prefixTable('items') . ' AS i ' . $sqlExtra . $itemRestrictionSql,
             ...$sqlParams
         );
     }
