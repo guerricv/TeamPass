@@ -597,7 +597,7 @@
         "/item/allTags": {
             "get": {
                 "operationId": "itemAllTags",
-                "summary": "Get all distinct item tags",
+                "summary": "Get the distinct item tags the caller can read",
                 "responses": {
                     "200": {
                         "description": "Tag list",

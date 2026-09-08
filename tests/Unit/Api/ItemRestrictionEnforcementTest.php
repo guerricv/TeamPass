@@ -215,6 +215,34 @@ class ItemRestrictionEnforcementTest extends TestCase
         self::assertLessThan($softDelete, $restrictionCheck);
     }
 
+    public function testAllTagsIsScopedToTheCallerReadableItems(): void
+    {
+        $body = $this->methodBody($this->itemControllerSource(), 'public function allTagsAction(');
+
+        // It used to SELECT DISTINCT over the whole tags table and disclose the tags of every
+        // folder in the instance, while the endpoint is documented as returning the tags
+        // accessible to the caller.
+        self::assertStringNotContainsString(
+            "'SELECT DISTINCT tag FROM ' . prefixTable('tags') . ' ORDER BY tag ASC'",
+            $body
+        );
+        self::assertStringContainsString("prefixTable('items') . ' AS i ON (i.id = t.item_id)", $body);
+        self::assertStringContainsString('i.id_tree IN (', $body);
+        self::assertStringContainsString('i.deleted_at IS NULL', $body);
+        self::assertStringContainsString("getItemFolderSqlConstraint('i.id_tree'", $body);
+        self::assertStringContainsString("getItemRestrictionSqlConstraint('i'", $body);
+    }
+
+    public function testAllTagsFailsClosedWithoutAnAccessibleFolder(): void
+    {
+        $body = $this->methodBody($this->itemControllerSource(), 'public function allTagsAction(');
+
+        // normalizeFolderIds() returns [] for an empty claim; the '0' sentinel then matches no
+        // folder rather than collapsing the IN () into a syntax error or an unscoped query.
+        self::assertStringContainsString("normalizeFolderIds(\$userData['folders_list'] ?? '')", $body);
+        self::assertStringContainsString(") ?: '0';", $body);
+    }
+
     public function testGetOtpDeniesARestrictedCallerAfterTheFolderCheck(): void
     {
         $body = $this->methodBody($this->itemControllerSource(), 'public function getOtpAction(');

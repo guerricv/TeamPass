@@ -821,7 +821,7 @@ curl -X DELETE "https://your-teampass.com/api/index.php/item/delete?id=123&revis
 
 ### Get all tags {#all-tags}
 
-> 📋 Returns the complete list of unique tags existing in the database
+> 📋 Returns the unique tags carried by the items you can read
 
 | Info | Description |
 | ---- | ----------- |
@@ -830,6 +830,10 @@ curl -X DELETE "https://your-teampass.com/api/index.php/item/delete?id=123&revis
 | **URL** | `<Teampass URL>/api/index.php/item/allTags` |
 | **Parameters** | None |
 | **Headers** | `Authorization: Bearer <token>` |
+
+The list is scoped to your own read access: only tags carried by non-deleted items sitting in
+folders you can access, excluding items you have been restricted from. Two users of the same
+instance therefore do not necessarily get the same list.
 
 **Response (success):**
 ```json

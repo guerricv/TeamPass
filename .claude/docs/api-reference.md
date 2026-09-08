@@ -241,6 +241,8 @@ Get all distinct item tags accessible to the user.
 
 **Response:** array of tag strings.
 
+**Scope:** tags of non-deleted items in the caller's accessible folders only, minus any foreign personal tree and any item the caller is restricted from — the same authorization as the item reads. Before 3.2.2.4 the handler did a bare `SELECT DISTINCT tag` over the whole table and disclosed the tags of every folder in the instance, contradicting this endpoint's own contract. A sharekey is **not** required: tags are metadata, and requiring one would make the list flicker while the background fan-out runs.
+
 **Permissions:** `allowed_to_read`.
 
 ---

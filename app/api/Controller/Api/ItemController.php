@@ -1031,8 +1031,29 @@ class ItemController extends BaseController
 
         if (strtoupper($requestMethod) === 'GET') {
             try {
+                // Tags are item metadata and inherit the item's authorization: the endpoint is
+                // documented as returning the tags accessible to the caller, but it used to
+                // SELECT DISTINCT over the whole table and disclosed the tags of every folder in
+                // the instance. Scope it exactly like the item reads — accessible folders, no
+                // foreign personal tree, and the item-level restriction.
+                // The legacy 'restricted_items_list' claim is deliberately not honoured here: it
+                // is an additive grant that AuthModel has kept empty since the folders list moved
+                // to the writableFolders endpoint, so it would only add dead SQL.
+                $folderAccessModel = new FolderAccessModel();
+                $safeFolders = implode(
+                    ',',
+                    $folderAccessModel->normalizeFolderIds($userData['folders_list'] ?? '')
+                ) ?: '0';
+
                 $rows = DB::query(
-                    'SELECT DISTINCT tag FROM ' . prefixTable('tags') . ' ORDER BY tag ASC'
+                    'SELECT DISTINCT t.tag
+                    FROM ' . prefixTable('tags') . ' AS t
+                    INNER JOIN ' . prefixTable('items') . ' AS i ON (i.id = t.item_id)
+                    WHERE i.deleted_at IS NULL
+                    AND i.id_tree IN (' . $safeFolders . ')'
+                    . $folderAccessModel->getItemFolderSqlConstraint('i.id_tree', (int) $userData['id'])
+                    . $folderAccessModel->getItemRestrictionSqlConstraint('i', (int) $userData['id'])
+                    . ' ORDER BY t.tag ASC'
                 );
 
                 $tags = array_column($rows, 'tag');
