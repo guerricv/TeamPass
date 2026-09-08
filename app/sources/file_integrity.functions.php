@@ -9,12 +9,13 @@ declare(strict_types=1);
  * command-line diagnostics, and unit tests.
  *
  * This module is deliberately DB-free. It never deletes, moves, or repairs an
- * installation. Its only write operation is persisting the latest JSON report
- * under storage/logs when explicitly requested by a caller.
+ * installation. It only writes its own coordination locks and the latest JSON
+ * reports under storage/logs when explicitly requested by a caller.
  */
 
 require_once __DIR__ . '/file_permissions.functions.php';
 require_once __DIR__ . '/file_scope.functions.php';
+require_once __DIR__ . '/runtime_files.functions.php';
 
 /**
  * Return the paths that must never participate in a code integrity scan.
@@ -504,7 +505,7 @@ function tpFileIntegrityIsRunning(string $root): bool
         return false;
     }
 
-    $handle = @fopen($lockPath, 'c+');
+    $handle = @fopen($lockPath, 'r+b');
     if ($handle === false) {
         return false;
     }
@@ -543,11 +544,12 @@ function tpFileIntegrityScan(
         if (is_dir(dirname($lockPath)) === false || is_writable(dirname($lockPath)) === false) {
             throw new RuntimeException('The file integrity lock directory is not writable.');
         }
-        $lockHandle = fopen($lockPath, 'c+');
-        if ($lockHandle === false || flock($lockHandle, LOCK_EX | LOCK_NB) === false) {
-            if (is_resource($lockHandle)) {
-                fclose($lockHandle);
-            }
+        $lockHandle = tpOpenRuntimeFile($lockPath);
+        if ($lockHandle === false) {
+            throw new RuntimeException('The file integrity lock could not be opened with restricted permissions.');
+        }
+        if (flock($lockHandle, LOCK_EX | LOCK_NB) === false) {
+            fclose($lockHandle);
             throw new RuntimeException('A file integrity scan is already running.');
         }
         ftruncate($lockHandle, 0);

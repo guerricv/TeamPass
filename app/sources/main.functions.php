@@ -59,6 +59,7 @@ require_once __DIR__ . '/item_revisions_logic.php';
 require_once __DIR__ . '/password_strength.functions.php';
 require_once __DIR__ . '/roles_scope.functions.php';
 require_once __DIR__ . '/file_integrity.functions.php';
+require_once __DIR__ . '/runtime_files.functions.php';
 // Owner resolution rules for personal objects, shared with the remediation tooling and its tests.
 require_once __DIR__ . '/../scripts/personal_sharekeys_logic.php';
 
@@ -10765,7 +10766,7 @@ function triggerBackgroundHandler(): void
     // storage/logs, which also prevents the handler from acquiring its lock
     // file (background tasks then never run). Surface it via error_log() so the
     // misconfiguration is not silently ignored.
-    if (@file_put_contents($triggerFile, (string) time()) === false) {
+    if (tpWriteRuntimeFile($triggerFile, (string) time()) === false) {
         error_log(
             'Teampass: cannot write background tasks trigger file "' . $triggerFile
             . '" - check that the web server user can write to this directory.'

@@ -956,10 +956,10 @@ class BackgroundTasksHandler {
         // server user cannot write to storage/logs). Surface it via error_log()
         // because LOG_TASKS may be disabled and the task log itself lives in the
         // same directory, so the failure would otherwise be completely silent.
-        $fp = @fopen($lockFile, 'w');
+        $fp = tpOpenRuntimeFile($lockFile);
         if ($fp === false) {
             error_log(
-                'Teampass Background Tasks: cannot create lock file "' . $lockFile
+                'Teampass Background Tasks: cannot open or secure lock file "' . $lockFile
                 . '" - check that the web server user can write to this directory.'
             );
             return false;
@@ -971,7 +971,14 @@ class BackgroundTasksHandler {
             return false;
         }
 
-        fwrite($fp, (string)getmypid());
+        // Only the lock owner may replace the PID; a contending handler must
+        // not truncate the running handler's file while trying to acquire it.
+        $pid = (string) getmypid();
+        if (ftruncate($fp, 0) === false || fwrite($fp, $pid) !== strlen($pid) || fflush($fp) === false) {
+            fclose($fp);
+            error_log('Teampass Background Tasks: cannot write lock file "' . $lockFile . '".');
+            return false;
+        }
         $this->lockFileHandle = $fp;
         return true;
     }

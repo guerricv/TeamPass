@@ -1606,7 +1606,7 @@ logItems(
                 break;
             }
 
-            $fileIntegrityEnqueueHandle = @fopen(tpFileIntegrityEnqueueLockPath(TEAMPASS_ROOT), 'c+');
+            $fileIntegrityEnqueueHandle = tpOpenRuntimeFile(tpFileIntegrityEnqueueLockPath(TEAMPASS_ROOT));
             if (
                 $fileIntegrityEnqueueHandle === false
                 || @flock($fileIntegrityEnqueueHandle, LOCK_EX) === false
