@@ -7,10 +7,18 @@ const { test } = require('node:test')
 // Execute the shipped login functions and event handlers, with controlled form,
 // transport and navigation adapters. No credentials leave this process.
 const template = readFileSync(join(__dirname, '../../app/core/login.js.php'), 'utf8')
-const source = template.replace(/\r\n/g, '\n').replace(/<\?php[\s\S]*?\?>/g, php => {
+const renderedTemplate = template.replace(/\r\n/g, '\n').replace(/<\?php[\s\S]*?\?>/g, php => {
   const translation = php.match(/\$lang->get\('([^']+)'\)/)
   return translation ? translation[1] : php.includes('echo ') ? 'null' : ''
-}).replace(/<\/?script[^>]*>/g, '')
+}).trim()
+
+// Extract the known wrapper from this repository-owned template. This is not an
+// HTML sanitizer: unexpected markup must fail the tests instead of being removed.
+const scriptOpen = '<script type="text/javascript">'
+const scriptClose = '</script>'
+assert.ok(renderedTemplate.startsWith(scriptOpen), 'Unexpected login script opening tag')
+assert.ok(renderedTemplate.endsWith(scriptClose), 'Unexpected login script closing tag')
+const source = renderedTemplate.slice(scriptOpen.length, -scriptClose.length)
 
 function section(start, end) {
   const from = source.indexOf(start)
