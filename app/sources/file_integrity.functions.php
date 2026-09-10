@@ -9,12 +9,13 @@ declare(strict_types=1);
  * command-line diagnostics, and unit tests.
  *
  * This module is deliberately DB-free. It never deletes, moves, or repairs an
- * installation. Its only write operation is persisting the latest JSON report
- * under storage/logs when explicitly requested by a caller.
+ * installation. It only writes its own coordination locks and the latest JSON
+ * reports under storage/logs when explicitly requested by a caller.
  */
 
 require_once __DIR__ . '/file_permissions.functions.php';
 require_once __DIR__ . '/file_scope.functions.php';
+require_once __DIR__ . '/runtime_files.functions.php';
 
 /**
  * Return the paths that must never participate in a code integrity scan.
@@ -500,12 +501,17 @@ function tpFileIntegrityEnqueueLockPath(string $root): string
 function tpFileIntegrityIsRunning(string $root): bool
 {
     $lockPath = tpFileIntegrityLockPath($root);
-    if (is_file($lockPath) === false) {
+    if (is_link($lockPath) || is_file($lockPath) === false) {
         return false;
     }
 
-    $handle = @fopen($lockPath, 'c+');
+    $handle = @fopen($lockPath, 'rb');
     if ($handle === false) {
+        return false;
+    }
+    $stat = @fstat($handle);
+    if ($stat === false || tpRuntimeFileMatchesPath($lockPath, $stat) === false) {
+        fclose($handle);
         return false;
     }
     $available = @flock($handle, LOCK_EX | LOCK_NB);
@@ -543,11 +549,12 @@ function tpFileIntegrityScan(
         if (is_dir(dirname($lockPath)) === false || is_writable(dirname($lockPath)) === false) {
             throw new RuntimeException('The file integrity lock directory is not writable.');
         }
-        $lockHandle = fopen($lockPath, 'c+');
-        if ($lockHandle === false || flock($lockHandle, LOCK_EX | LOCK_NB) === false) {
-            if (is_resource($lockHandle)) {
-                fclose($lockHandle);
-            }
+        $lockHandle = tpOpenRuntimeFile($lockPath);
+        if ($lockHandle === false) {
+            throw new RuntimeException('The file integrity lock could not be opened as a regular file.');
+        }
+        if (flock($lockHandle, LOCK_EX | LOCK_NB) === false) {
+            fclose($lockHandle);
             throw new RuntimeException('A file integrity scan is already running.');
         }
         ftruncate($lockHandle, 0);
