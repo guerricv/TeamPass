@@ -501,12 +501,17 @@ function tpFileIntegrityEnqueueLockPath(string $root): string
 function tpFileIntegrityIsRunning(string $root): bool
 {
     $lockPath = tpFileIntegrityLockPath($root);
-    if (is_file($lockPath) === false) {
+    if (is_link($lockPath) || is_file($lockPath) === false) {
         return false;
     }
 
-    $handle = @fopen($lockPath, 'r+b');
+    $handle = @fopen($lockPath, 'rb');
     if ($handle === false) {
+        return false;
+    }
+    $stat = @fstat($handle);
+    if ($stat === false || tpRuntimeFileMatchesPath($lockPath, $stat) === false) {
+        fclose($handle);
         return false;
     }
     $available = @flock($handle, LOCK_EX | LOCK_NB);
@@ -546,7 +551,7 @@ function tpFileIntegrityScan(
         }
         $lockHandle = tpOpenRuntimeFile($lockPath);
         if ($lockHandle === false) {
-            throw new RuntimeException('The file integrity lock could not be opened with restricted permissions.');
+            throw new RuntimeException('The file integrity lock could not be opened as a regular file.');
         }
         if (flock($lockHandle, LOCK_EX | LOCK_NB) === false) {
             fclose($lockHandle);

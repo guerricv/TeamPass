@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Process\Process;
 
 require_once __DIR__ . '/../../app/sources/runtime_files.functions.php';
 require_once __DIR__ . '/../../app/sources/file_integrity.functions.php';
@@ -104,7 +105,7 @@ class RuntimeFilesTest extends TestCase
         ];
     }
 
-    /** Restrict old files in place without granting access or damaging an active PID. */
+    /** Restrict old files in place without broadening group/other access or damaging a PID. */
     #[DataProvider('existingModes')]
     public function testExistingFilesAreRestrictedWithoutTruncatingOrReplacingThem(int $mode, int $expectedMode): void
     {
@@ -142,6 +143,145 @@ class RuntimeFilesTest extends TestCase
         }
     }
 
+    /** A chmod-only failure must not stop a writable lock or signal. */
+    public function testPermissionRepairFailureIsLoggedWithoutStoppingWrites(): void
+    {
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/teampass_background_tasks.lock';
+        self::assertSame(5, file_put_contents($path, '12345'));
+        self::assertTrue(chmod($path, 0664));
+        $inode = fileinode($path);
+
+        // PHP 8 permits redefining a disabled built-in. Isolate the simulated
+        // chmod denial in a child; do not require sudo or change any account.
+        $probe = $this->runRuntimeProbe($path, <<<'PHP'
+if (function_exists('chmod')) {
+    throw new RuntimeException('The chmod denial fixture was not enabled.');
+} else {
+    function chmod(string $filename, int $permissions): bool { return false; }
+}
+$handle = tpOpenRuntimeFile($path);
+$opened = is_resource($handle);
+$contents = $opened ? stream_get_contents($handle) : null;
+if ($opened) { fclose($handle); }
+$written = tpWriteRuntimeFile($path, 'signal');
+echo json_encode(['opened' => $opened, 'contents' => $contents, 'written' => $written]);
+PHP, ['-d', 'disable_functions=chmod']);
+
+        self::assertSame(['opened' => true, 'contents' => '12345', 'written' => true], json_decode($probe->getOutput(), true));
+        self::assertStringContainsString('Continuing with existing access', $probe->getErrorOutput());
+        clearstatcache(true, $path);
+        self::assertSame(0664, fileperms($path) & 0777);
+        self::assertSame($inode, fileinode($path));
+        self::assertSame('signal', file_get_contents($path));
+
+        $report = tpFilePermissionsScan($this->root);
+        $warnings = array_values(array_filter(
+            $report['issues'],
+            static fn (array $issue): bool => $issue['reason'] === 'runtime_world_accessible'
+        ));
+        self::assertCount(1, $warnings);
+        self::assertSame('storage/logs/teampass_background_tasks.lock', $warnings[0]['path']);
+    }
+
+    /** A path replacement is not a recoverable chmod-only failure. */
+    public function testTargetReplacedDuringPermissionRepairIsRejected(): void
+    {
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/replaced.lock';
+        self::assertSame(5, file_put_contents($path, '12345'));
+        self::assertTrue(chmod($path, 0644));
+        $probe = $this->runRuntimeProbe($path, <<<'PHP'
+if (function_exists('chmod')) {
+    throw new RuntimeException('The replacement fixture was not enabled.');
+} else {
+    function chmod(string $filename, int $permissions): bool {
+        rename($filename, $filename . '.original');
+        file_put_contents($filename, 'replacement');
+        return false;
+    }
+}
+echo json_encode(['rejected' => tpWriteRuntimeFile($path, 'must not be written') === false]);
+PHP, ['-d', 'disable_functions=chmod']);
+        self::assertSame(['rejected' => true], json_decode($probe->getOutput(), true));
+        self::assertSame('12345', file_get_contents($path . '.original'));
+        self::assertSame('replacement', file_get_contents($path));
+    }
+
+    /** Match descriptor identity, not merely the existence of a regular path. */
+    public function testPathIdentityRejectsReplacementsAndMissingPaths(): void
+    {
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/identity.lock';
+        $handle = tpOpenRuntimeFile($path);
+        self::assertIsResource($handle);
+        try {
+            $stat = fstat($handle);
+            self::assertIsArray($stat);
+            self::assertTrue(tpRuntimeFileMatchesPath($path, $stat));
+            self::assertTrue(rename($path, $path . '.original'));
+            self::assertFalse(tpRuntimeFileMatchesPath($path, $stat));
+            self::assertSame(11, file_put_contents($path, 'replacement'));
+            self::assertFalse(tpRuntimeFileMatchesPath($path, $stat));
+            self::assertTrue(unlink($path));
+            self::assertTrue(mkdir($path));
+            self::assertFalse(tpRuntimeFileMatchesPath($path, $stat));
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /** Bound the child runtime so a blocking-lock regression cannot hang the suite. */
+    public function testContendingSignalWriterDoesNotWaitOrTruncate(): void
+    {
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/busy.trigger';
+        $holder = tpOpenRuntimeFile($path);
+        self::assertIsResource($holder);
+        try {
+            self::assertTrue(flock($holder, LOCK_EX | LOCK_NB));
+            self::assertSame(5, fwrite($holder, '12345'));
+            self::assertTrue(fflush($holder));
+            $probe = $this->runRuntimeProbe($path, <<<'PHP'
+$wouldBlock = false;
+$written = tpWriteRuntimeFile($path, 'replacement', $wouldBlock);
+echo json_encode(['written' => $written, 'would_block' => $wouldBlock]);
+PHP);
+            self::assertSame(['written' => false, 'would_block' => true], json_decode($probe->getOutput(), true));
+            self::assertTrue(rewind($holder));
+            self::assertSame('12345', stream_get_contents($holder));
+        } finally {
+            fclose($holder);
+        }
+        $wouldBlock = true;
+        self::assertTrue(tpWriteRuntimeFile($path, 'next', $wouldBlock));
+        self::assertFalse($wouldBlock);
+    }
+
+    /** The status probe needs read access only and never repairs permissions. */
+    public function testStatusProbeCanReadAnUnwritableLock(): void
+    {
+        $this->requirePosix();
+        $path = tpFileIntegrityLockPath($this->root);
+        $holder = tpOpenRuntimeFile($path);
+        self::assertIsResource($holder);
+        try {
+            self::assertTrue(flock($holder, LOCK_EX | LOCK_NB));
+            self::assertSame(5, fwrite($holder, '12345'));
+            self::assertTrue(fflush($holder));
+            self::assertTrue(chmod($path, 0400));
+            self::assertTrue(tpFileIntegrityIsRunning($this->root));
+            clearstatcache(true, $path);
+            self::assertSame(0400, fileperms($path) & 0777);
+        } finally {
+            fclose($holder);
+        }
+        self::assertFalse(tpFileIntegrityIsRunning($this->root));
+        self::assertSame('12345', file_get_contents($path));
+        clearstatcache(true, $path);
+        self::assertSame(0400, fileperms($path) & 0777);
+    }
+
     /** Reject unsupported targets without leaving files or a changed process umask. */
     public function testInvalidTargetsFailWithoutChangingUmaskOrDirectoryContents(): void
     {
@@ -150,6 +290,9 @@ class RuntimeFilesTest extends TestCase
         self::assertFalse(tpWriteRuntimeFile($this->root . '/missing/task.trigger', '123'));
         self::assertFalse(tpOpenRuntimeFile($this->root . '/storage/logs'));
         self::assertFalse(tpWriteRuntimeFile('php://memory', '123'));
+        $wouldBlock = true;
+        self::assertFalse(tpWriteRuntimeFile($this->root . '/missing/task.trigger', '123', $wouldBlock));
+        self::assertFalse($wouldBlock);
         self::assertSame($mask, umask());
         self::assertSame(['.', '..'], scandir($this->root . '/storage/logs'));
     }
@@ -166,6 +309,8 @@ class RuntimeFilesTest extends TestCase
         $mode = fileperms($target);
         self::assertFalse(tpOpenRuntimeFile($link));
         self::assertFalse(tpWriteRuntimeFile($link, '123'));
+        self::assertTrue(symlink($target, tpFileIntegrityLockPath($this->root)));
+        self::assertFalse(tpFileIntegrityIsRunning($this->root));
         self::assertSame('untouched', file_get_contents($target));
         clearstatcache(true, $target);
         self::assertSame($mode, fileperms($target));
@@ -259,6 +404,21 @@ class RuntimeFilesTest extends TestCase
         self::assertCount(1, $worldWritable);
         self::assertSame('storage/logs/unsafe.lock', $worldWritable[0]['path']);
         self::assertSame([], $worldReadable);
+    }
+
+    /** @param list<string> $phpArguments */
+    private function runRuntimeProbe(string $path, string $code, array $phpArguments = []): Process
+    {
+        $bootstrap = 'require $argv[1]; $path = $argv[2];' . "\n";
+        $process = new Process(array_merge(
+            [PHP_BINARY],
+            $phpArguments,
+            ['-r', $bootstrap . $code, '--', __DIR__ . '/../../app/sources/runtime_files.functions.php', $path]
+        ));
+        $process->setTimeout(5);
+        $process->run();
+        self::assertSame(0, $process->getExitCode(), $process->getErrorOutput());
+        return $process;
     }
 
     private function requirePosix(): void

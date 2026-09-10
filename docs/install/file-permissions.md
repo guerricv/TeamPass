@@ -328,12 +328,21 @@ find ${TEAMPASS} -not -path "*/vendor/*" ! -type l -perm -o+w -ls
 **Utilities → System Health → File integrity** starts a read-only background scan. Detailed findings are stored in `storage/logs/file-integrity-report.json`, while the Dashboard and Health polling read the bounded `storage/logs/file-integrity-summary.json`. Both files carry the same scan identifier, and detailed findings are rejected if the identifiers do not match.
 
 The background-task lock and trigger, and the file-integrity scan/enqueue locks,
-are runtime files, not release-manifest entries. TeamPass restricts their POSIX
-permissions to `0640` or stricter whenever it opens them for writing, including
-when a deleted file is recreated. Existing `0600` modes are preserved; the
-process umask is not changed. The permission scan still audits these files and
+are runtime files, not release-manifest entries. TeamPass attempts to restrict their
+POSIX permissions to `0640` or `0600` whenever it opens them for writing, including
+when a deleted file is recreated. Existing `0600` modes are preserved and owner
+read/write access is ensured; the process umask is not changed. If opening succeeds
+but `chmod` fails (for example, a group-writable file belongs to another account),
+TeamPass logs a warning and continues with the existing access. An invalid target
+or an actual open/write failure still prevents that operation. The permission scan still audits these files and
 reports unsafe permissions or access problems. No manual manifest update or
 permission-scan exclusion is needed for these locks.
+
+Runtime directories must not be writable by untrusted users. Descriptor/path
+identity checks detect observed file replacements, but do not make path-based
+`chmod` atomic. Signal writers never wait on a competing producer in a web request;
+contention is distinguished from an I/O error. The scan-status probe opens existing
+locks read-only and neither creates them nor changes their permissions.
 
 The scan compares protected files with `app/files_reference.txt` and reports separate categories for modified, missing, unknown, legacy-layout and Composer development files. Instance-owned data under `storage/`, `secrets/` and legacy runtime directories (`files/`, `upload/`, `backups/`) is excluded. Repository and development-only artifacts such as `.claude/`, `.github/`, `docs/`, `tests/` and their root tooling files are neutral: they do not affect integrity health, are not audited for runtime permissions and are not included in permission remediation. Any top-level hidden *directory* is treated the same way, so a tool directory added later is covered without updating the policy, and the same applies to repository metadata vendored inside dependencies (`app/vendor/*/.github/`, `.gitignore`, `.travis.yml`, `.editorconfig`, …). The release checksum generator consumes this same canonical policy, keeping those paths out of future manifests. This is an explicit path policy, not a blanket hidden-file exclusion; top-level hidden *files* stay in scope, and `.htaccess`, `.user.ini`, `.env*`, `.gitkeep`, `app/includes/.externals/`, Composer deployment metadata, Docker assets and application scripts remain protected. Ordinary avatar files are ignored, but executable files or symbolic links planted in the writable public avatar directory are reported as critical. A deliberately removed `public/install/` directory is accepted; when that directory exists, its files are fully checked. The reference manifest itself and generated configuration files are excluded from self-comparison.
 
@@ -397,7 +406,7 @@ This replaces the former `composer install --no-dev --optimize-autoloader` clean
 - Admin dashboard → *System Health* → *Cron Jobs* shows **Delayed** (or **Error**). Hover the info icon next to the badge for the same hint.
 - Tasks pile up in *Tasks → In progress* and only complete when the handler is launched by hand.
 - The PHP / web-server error log contains one of:
-  - `Teampass Background Tasks: cannot open or secure lock file ".../storage/logs/teampass_background_tasks.lock" - check that the web server user can write to this directory.`
+  - `Teampass Background Tasks: cannot open a valid lock file ".../storage/logs/teampass_background_tasks.lock" - check that the web server user can write to this directory.`
   - `Teampass: cannot write background tasks trigger file ".../storage/logs/...".`
 
 **Cause**

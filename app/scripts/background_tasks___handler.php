@@ -959,7 +959,7 @@ class BackgroundTasksHandler {
         $fp = tpOpenRuntimeFile($lockFile);
         if ($fp === false) {
             error_log(
-                'Teampass Background Tasks: cannot open or secure lock file "' . $lockFile
+                'Teampass Background Tasks: cannot open a valid lock file "' . $lockFile
                 . '" - check that the web server user can write to this directory.'
             );
             return false;

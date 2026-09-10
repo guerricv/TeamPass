@@ -27,14 +27,38 @@ declare(strict_types=1);
  * @copyright 2009-2026 Teampass.net
  * @license   GPL-3.0
  * @see       https://www.teampass.net
- 
+ */
+
+/**
+ * Check that a runtime path still names the regular file held by a stream.
+ *
+ * These checks detect replacements observed before/after chmod, but cannot make
+ * path-based chmod atomic. Runtime directories must not be writable by third parties.
+ *
+ * @param array<string, int> $streamStat Metadata returned by fstat().
+ * @phpstan-impure The filesystem can change between calls with the same arguments.
+ */
+function tpRuntimeFileMatchesPath(string $path, array $streamStat): bool
+{
+    clearstatcache(true, $path);
+    $pathStat = @lstat($path);
+
+    return $pathStat !== false
+        && ($streamStat['mode'] & 0170000) === 0100000
+        && ($pathStat['mode'] & 0170000) === 0100000
+        && $streamStat['dev'] === $pathStat['dev']
+        && $streamStat['ino'] === $pathStat['ino'];
+}
+
 /**
  * Open a trusted local runtime lock or signal without truncating its contents.
  *
- * Restrict POSIX permissions before callers write: an inherited umask of 0022
+ * Try to restrict POSIX permissions before callers write: an inherited umask of 0022
  * otherwise produces 0644 files and triggers the Health permission warning.
- * Intersect with the current mode so a stricter deployment (e.g. 0600) stays
- * strict. Do not change the process-wide umask in a web request.
+ * Preserve 0600 and owner read/write access without granting group/other access.
+ * A chmod-only failure is logged but must not stop processing accessible locks
+ * and signals. Permission auditing still reports the unresolved permissions.
+ * Do not change the process-wide umask in a web request.
  *
  * @return resource|false The caller owns the stream and its advisory locking.
  */
@@ -54,44 +78,59 @@ function tpOpenRuntimeFile(string $path)
         return false;
     }
 
+    $stat = @fstat($handle);
+    if ($stat === false || tpRuntimeFileMatchesPath($path, $stat) === false) {
+        fclose($handle);
+        return false;
+    }
+
     // Windows uses ACLs rather than the POSIX mode audited by System Health.
     if (PHP_OS_FAMILY === 'Windows') {
         return $handle;
     }
 
-    $stat = fstat($handle);
-    if ($stat === false) {
-        fclose($handle);
-        return false;
-    }
-
     $currentMode = $stat['mode'] & 07777;
-    $restrictedMode = $currentMode & 0640;
+    $restrictedMode = ($currentMode & 0640) | 0600;
     if ($currentMode !== $restrictedMode && @chmod($path, $restrictedMode) === false) {
-        error_log('Teampass: cannot restrict runtime file permissions for "' . $path . '".');
+        error_log(
+            'Teampass: cannot restrict runtime file permissions for "' . $path
+            . '". Continuing with existing access; check the file owner and permissions.'
+        );
+    }
+
+    // A chmod-only failure is recoverable, but a replaced/invalid target is not.
+    if (tpRuntimeFileMatchesPath($path, $stat) === false) {
         fclose($handle);
         return false;
     }
 
-    clearstatcache(true, $path);
     return $handle;
 }
 
 /**
  * Write a trusted local runtime signal using the same permissions as locks.
  *
- * Return false on an open, permission, lock or write failure so the caller can
- * report it. A signal may be consumed by the background handler after writing.
+ * Never wait for a competing producer in a web request. Return false on an open,
+ * lock or write failure; distinguish contention from an I/O failure for callers.
+ * A signal may be consumed by the background handler after writing.
+ *
+ * @param bool $wouldBlock Set to true only when another producer holds the lock.
  */
-function tpWriteRuntimeFile(string $path, string $contents): bool
+function tpWriteRuntimeFile(string $path, string $contents, bool &$wouldBlock = false): bool
 {
+    $wouldBlock = false;
     $handle = tpOpenRuntimeFile($path);
     if ($handle === false) {
         return false;
     }
 
     try {
-        if (@flock($handle, LOCK_EX) === false || @ftruncate($handle, 0) === false) {
+        $lockWouldBlock = 0;
+        if (@flock($handle, LOCK_EX | LOCK_NB, $lockWouldBlock) === false) {
+            $wouldBlock = $lockWouldBlock === 1;
+            return false;
+        }
+        if (@ftruncate($handle, 0) === false) {
             return false;
         }
 
