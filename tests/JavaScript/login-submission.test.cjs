@@ -7,9 +7,12 @@ const { test } = require('node:test')
 // Execute the shipped login functions and event handlers, with controlled form,
 // transport and navigation adapters. No credentials leave this process.
 const template = readFileSync(join(__dirname, '../../app/core/login.js.php'), 'utf8')
+// The template currently has no ?> inside PHP string literals. This lightweight
+// substitution is intentionally not a PHP parser and relies on that constraint.
 const renderedTemplate = template.replace(/\r\n/g, '\n').replace(/<\?php[\s\S]*?\?>/g, php => {
   const translation = php.match(/\$lang->get\('([^']+)'\)/)
-  return translation ? translation[1] : php.includes('echo ') ? 'null' : ''
+  if (translation) return php.includes('json_encode(') ? JSON.stringify(translation[1]) : translation[1]
+  return php.includes('echo ') ? 'null' : ''
 }).trim()
 
 // Extract the known wrapper from this repository-owned template. This is not an
@@ -20,14 +23,14 @@ assert.ok(renderedTemplate.startsWith(scriptOpen), 'Unexpected login script open
 assert.ok(renderedTemplate.endsWith(scriptClose), 'Unexpected login script closing tag')
 const source = renderedTemplate.slice(scriptOpen.length, -scriptClose.length)
 
-function section(start, end) {
-  const from = source.indexOf(start)
-  const to = source.indexOf(end, from)
+function section(start, end, scriptSource = source) {
+  const from = scriptSource.indexOf(start)
+  const to = scriptSource.indexOf(end, from)
   assert.ok(from >= 0 && to > from, `Missing login source section: ${start}`)
-  return source.slice(from, to)
+  return scriptSource.slice(from, to)
 }
 
-function createLogin() {
+function createLogin(loginSource = source) {
   const nodes = new Map()
   const requests = []
   const notices = []
@@ -37,9 +40,10 @@ function createLogin() {
   const navigation = { href: '', reloads: 0, reload() { this.reloads++ } }
   let focused = null
   let nonce = 0
+  let elapsed = 0
   function field(id, value = '', tag = 'input', type = 'text', classes = []) {
     const node = { id, value, tag, type, readOnly: false, disabled: false, checked: false,
-      attrs: {}, classes: new Set(classes), handlers: {}, dataset: {} }
+      attrs: {}, classes: new Set(classes), handlers: {}, dataset: {}, inLoginBox: true }
     nodes.set(id, node)
     return node
   }
@@ -51,8 +55,11 @@ function createLogin() {
   for (const id of ['but_identify_user', 'but_login_with_oauth2', 'forgot-local-password-link',
     'send-temporary-code']) field(id, '', 'button')
   for (const method of ['google', 'yubico', 'duo']) {
-    field(`radio-${method}`, '', 'input', 'radio', ['2fa_selector_select']).dataset.mfa = method
-    field(`method-${method}`, method, 'button', '', ['radiosforbuttons-2fa_selector_select'])
+    const radio = field(`radio-${method}`, '', 'input', 'radio', ['2fa_selector_select'])
+    radio.dataset.mfa = method
+    // radiosforbuttons moves the original radios and creates visible spans.
+    radio.inLoginBox = false
+    field(`method-${method}`, method, 'span', '', ['btn', 'radiosforbuttons-2fa_selector_select'])
   }
   field('login-box', '', 'div', '', ['login-box'])
 
@@ -63,6 +70,7 @@ function createLogin() {
       if (query === 'body') return [fieldIfMissing('body')]
       if (query.startsWith('#')) return [fieldIfMissing(query.slice(1))]
       return [...nodes.values()].filter(node => {
+        if (query.startsWith('.login-box ') && !node.inLoginBox) return false
         if (query.includes(':enabled') && node.disabled) return false
         if (query.includes(':checked') && !node.checked) return false
         if (query.includes('input[type="radio"]')) return node.type === 'radio'
@@ -118,11 +126,24 @@ function createLogin() {
   const $ = selector => collection(select(selector))
   $.inArray = (value, array) => array.indexOf(value)
   $.when = value => Promise.resolve(value)
-  $.post = (url, body) => {
+  function sendRequest(url, body, timeout = 0) {
     let resolve, reject
     const promise = new Promise((accept, fail) => { resolve = accept; reject = fail })
-    requests.push({ url, body, resolve, reject })
+    const request = { url, body, timeout, deadline: elapsed + timeout, settled: false, aborted: false }
+    const settle = callback => value => {
+      if (request.settled) return
+      request.settled = true
+      callback(value)
+    }
+    request.resolve = settle(resolve)
+    request.reject = settle(reject)
+    requests.push(request)
     return promise
+  }
+  $.post = (url, body) => sendRequest(url, body)
+  $.ajax = options => {
+    assert.equal(options.type, 'POST')
+    return sendRequest(options.url, options.data, options.timeout)
   }
   const window = { location: navigation, handlers: {} }
   const context = vm.createContext({ $, Date, Promise, encodeURIComponent, unescape,
@@ -152,14 +173,14 @@ function createLogin() {
     startAgsesAuth() {}
   })
   // Compile the complete template too, including code outside the exercised sections.
-  new vm.Script(source)
-  vm.runInContext(section('    var debugJavascript', '    // On page load'), context)
-  vm.runInContext(section('    function launchIdentify(', '    function renderTotpQrCode('), context)
-  vm.runInContext(source.slice(source.indexOf('    function showMFAMethodForUser(')), context)
+  new vm.Script(loginSource)
+  vm.runInContext(section('var debugJavascript', '$(function() {', loginSource), context)
+  vm.runInContext(section('function launchIdentify(', 'function renderTotpQrCode(', loginSource), context)
+  vm.runInContext(loginSource.slice(loginSource.indexOf('function showMFAMethodForUser(')), context)
   context.renderTotpQrCode = () => {}
-  vm.runInContext(section('        // Click on log in button\n', '        // Relaunch authentication'), context)
-  vm.runInContext(section("    $('.submit-button').keypress", "    $(document).on('click', '#register-yubiko-key'"), context)
-  vm.runInContext(section("        $(window).on('pageshow'", '        // Manage case of oauth2 login'), context)
+  vm.runInContext(section("$('#but_identify_user').click(", 'const storedOauth2Info =', loginSource), context)
+  vm.runInContext(section("$('.submit-button').keypress", "$(document).on('click', '#register-yubiko-key'", loginSource), context)
+  vm.runInContext(section("$(window).on('pageshow'", 'var userOauth2Info =', loginSource), context)
 
   return {
     context, nodes, requests, notices, timers, navigation, storage, sessionStorage,
@@ -171,6 +192,15 @@ function createLogin() {
       assert.equal(prevented, keyCode === 10 || keyCode === 13)
     },
     click(id = 'but_identify_user') { nodes.get(id).handlers.click() },
+    advanceTime(milliseconds) {
+      elapsed += milliseconds
+      for (const request of requests) {
+        if (!request.settled && request.timeout > 0 && request.deadline <= elapsed) {
+          request.aborted = true
+          request.reject(new Error('timeout'))
+        }
+      }
+    },
     busy(expected) {
       assert.equal(nodes.get('but_identify_user').disabled, expected)
       assert.equal(nodes.get('pw').readOnly, expected)
@@ -361,9 +391,16 @@ test('MFA method buttons cannot change the selected factor during submission', a
   app.nodes.get('ga_code').value = '123456'
   app.launch()
   const duoButton = app.nodes.get('method-duo')
+  assert.equal(duoButton.tag, 'span')
+  app.busy(true)
   duoButton.handlers.click.call(duoButton)
   await flush()
   assert.equal(app.requests[1].body.data.payload.user_2fa_selection, 'google')
+  app.requests[1].resolve({ error: true, message: 'Wrong second factor' })
+  await flush()
+  app.busy(false)
+  duoButton.handlers.click.call(duoButton)
+  assert.equal(app.nodes.get('2fa_user_selection').value, 'duo')
 })
 
 test('first Google enrollment leaves the code input usable', async () => {
@@ -548,4 +585,90 @@ test('a failed background validity check still allows credential submission', as
   app.requests[0].reject(new Error('Network failure'))
   await flush()
   assert.equal(app.requests[1].body.type, 'identify_user')
+})
+
+test('rewording JavaScript comments does not break source extraction', async () => {
+  const app = createLogin(source.replace(/^([ \t]*)\/\/.*$/gm, '$1// Reworded comment'))
+  app.enter()
+  await flush()
+  assert.equal(app.requests[0].body.type, 'identify_user')
+  app.requests[0].resolve(refusal)
+  await flush()
+  app.busy(false)
+})
+
+test('a hung validity check times out and cannot process a late response', async () => {
+  const app = createLogin()
+  app.context.lastSessionKeyCheck = 0
+  app.context.checkSessionKeyFreshness()
+  app.launch()
+  const check = app.requests[0]
+  const originalKey = app.context.tpSessionKey
+  app.advanceTime(9999)
+  await flush()
+  assert.equal(app.requests.length, 1)
+  app.busy(true)
+  app.advanceTime(1)
+  await flush()
+  assert.equal(check.aborted, true)
+  assert.equal(app.context.sessionKeyCheckInProgress, false)
+  assert.equal(app.requests[1].body.type, 'identify_user')
+  check.resolve('{"valid":false}')
+  await flush()
+  assert.equal(app.requests.length, 2)
+  assert.equal(app.context.tpSessionKey, originalKey)
+  app.requests[1].resolve(refusal)
+  await flush()
+  app.busy(false)
+})
+
+for (const background of [true, false]) {
+  test(`a hung ${background ? 'background' : 'login'} renewal times out into the refresh dialog`, async () => {
+    const app = createLogin()
+    if (background) {
+      app.context.lastSessionKeyCheck = 0
+      app.context.checkSessionKeyFreshness()
+    }
+    app.launch()
+    await flush()
+    app.requests[0].resolve(background ? '{"valid":false}' : 'ERROR SESSION EXPIRED')
+    await flush()
+    const renewal = app.requests[1]
+    assert.equal(renewal.body.type, 'refresh_session_key')
+    const originalKey = app.context.tpSessionKey
+    app.advanceTime(9999)
+    await flush()
+    assert.ok(!app.notices.some(notice => notice.level === 'refresh-dialog'))
+    app.advanceTime(1)
+    await flush()
+    assert.equal(renewal.aborted, true)
+    assert.ok(app.notices.some(notice => notice.level === 'refresh-dialog'))
+    app.busy(true)
+    renewal.resolve('{"key":"late-key"}')
+    app.enter()
+    await flush()
+    assert.equal(app.requests.length, 2)
+    assert.equal(app.context.tpSessionKey, originalKey)
+    for (let second = 0; second < 5; second++) app.timers[0]()
+    assert.equal(app.navigation.reloads, 1)
+  })
+}
+
+test('settled session requests do not time out a slower authentication request', async () => {
+  const app = createLogin()
+  app.context.lastSessionKeyCheck = 0
+  app.context.checkSessionKeyFreshness()
+  app.launch()
+  app.requests[0].resolve('{"valid":false}')
+  await flush()
+  app.requests[1].resolve('{"key":"renewed-key"}')
+  await flush()
+  app.advanceTime(10000)
+  await flush()
+  assert.equal(app.requests.length, 3)
+  assert.ok(app.requests.every(request => !request.aborted))
+  app.busy(true)
+  app.requests[2].resolve(success(app.requests[2]))
+  await flush()
+  assert.equal(app.navigation.href, './index.php?page=items')
 })

@@ -60,6 +60,8 @@ declare(strict_types=1);
     var lastSessionKeyCheck = Date.now();
     var sessionKeyCheckInProgress = false;
     var sessionKeyCheckRequest = null;
+    // Bound session housekeeping without limiting the LDAP/MFA authentication request.
+    const sessionKeyRequestTimeout = 10000;
 
     /**
      * Freeze the submitted form while preserving controls already locked by the page.
@@ -110,8 +112,8 @@ declare(strict_types=1);
         $('.login-box').show();
         toastr.remove();
         toastr.error(
-            '<?php echo $lang->get('server_answer_error'); ?>',
-            '<?php echo $lang->get('caution'); ?>', {
+            <?php echo json_encode($lang->get('server_answer_error'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>,
+            <?php echo json_encode($lang->get('caution'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>, {
                 timeOut: 5000,
                 progressBar: true,
                 positionClass: 'toast-bottom-right'
@@ -173,11 +175,14 @@ declare(strict_types=1);
         }
         sessionKeyRecoveryDone = true;
 
-        return $.post(
-            'sources/identify.php', {
+        return $.ajax({
+            url: 'sources/identify.php',
+            type: 'POST',
+            timeout: sessionKeyRequestTimeout,
+            data: {
                 type: 'refresh_session_key'
             }
-        ).then(
+        }).then(
             function(answer) {
                 const parsed = safeParseJSONMaybe(answer);
 
@@ -262,12 +267,15 @@ declare(strict_types=1);
         }
         sessionKeyCheckInProgress = true;
 
-        sessionKeyCheckRequest = $.post(
-            'sources/identify.php', {
+        sessionKeyCheckRequest = $.ajax({
+            url: 'sources/identify.php',
+            type: 'POST',
+            timeout: sessionKeyRequestTimeout,
+            data: {
                 type: 'is_session_key_valid',
                 key: tpSessionKey
             }
-        ).then(
+        }).then(
             function(answer) {
                 lastSessionKeyCheck = Date.now();
 
@@ -484,9 +492,12 @@ declare(strict_types=1);
         // Click on log in button with Azure Entra
         if($("#but_login_with_oauth2").length > 0) {
             $('#but_login_with_oauth2').click(function() {
+                if (loginInProgress === true || loginNavigationPending === true) {
+                    return;
+                }
                 if (debugJavascript === true) {
-                console.log('User starts auth through button but_login_with_oauth2 click');
-            }
+                    console.log('User starts auth through button but_login_with_oauth2 click');
+                }
                 launchIdentify(false, '<?php echo isset($nextUrl) === true ? $nextUrl : ''; ?>', false, true);
             });
         }
