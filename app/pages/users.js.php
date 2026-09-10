@@ -151,7 +151,7 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
         )
     }
 
-    $(document).on('input keyup', '#ldap-users-search', filterLdapUsersTable)
+    $(document).on('input', '#ldap-users-search', filterLdapUsersTable)
 
     $(document).on('click', '#ldap-users-search-clear', () => {
         $('#ldap-users-search').val('').trigger('input').focus()
@@ -3319,7 +3319,8 @@ function refreshListInactiveUsers(filterValue) {
                                 entry.displayname !== undefined ? entry.displayname[0] : '',
                                 entry.givenname !== undefined ? entry.givenname[0] : '',
                                 entry.sn !== undefined ? entry.sn[0] : '',
-                                entry.mail !== undefined ? entry.mail[0] : ''
+                                entry.mail !== undefined ? entry.mail[0] : '',
+                                (entry.ldap_user_groups || []).join(' ')
                             ].join(' ')
 
                             // LDAP/AD account status indicators

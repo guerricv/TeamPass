@@ -324,21 +324,21 @@ $emailNotConfigured = $canAccessInactiveAndDeletedUsers === true
                 <!-- table start -->
                 <div class="card-body">
                     <div class="d-flex flex-wrap align-items-center mb-3" id="ldap-users-toolbar">
-                        <div class="input-group input-group-sm mr-2 mb-2" style="width: 260px; max-width: 100%;" id="ldap-users-search-wrapper">
+                        <div class="input-group input-group-sm mr-2 mb-2" id="ldap-users-search-wrapper">
                             <div class="input-group-prepend">
                                 <div class="input-group-text">
-                                    <i class="fas fa-search" aria-hidden="true"></i>
+                                    <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
                                 </div>
                             </div>
                             <input type="text" role="searchbox" class="form-control" placeholder="<?php echo $lang->get('find'); ?>" aria-label="<?php echo $lang->get('find'); ?>" id="ldap-users-search">
                             <div class="input-group-append">
                                 <button type="button" class="btn btn-default" title="<?php echo $lang->get('reset'); ?>" aria-label="<?php echo $lang->get('reset'); ?>" id="ldap-users-search-clear" disabled>
-                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
                                 </button>
                             </div>
                         </div>
                         <button type="button" class="btn btn-secondary btn-sm tp-action mr-2 mb-2" data-action="ldap-existing-users">
-                            <i class="fa-solid fa-sync-alt mr-2"></i><?php echo $lang->get('refresh'); ?>
+                            <i class="fa-solid fa-sync-alt mr-2"></i><?php echo $lang->get('list_users'); ?>
                         </button>
                         <button type="button" class="btn btn-secondary btn-sm tp-action mr-2 mb-2" data-action="ldap-add-role">
                             <i class="fa-solid fa-graduation-cap mr-2"></i><?php echo $lang->get('add_role_tip'); ?>
@@ -389,8 +389,8 @@ $emailNotConfigured = $canAccessInactiveAndDeletedUsers === true
                                     <tbody id="row-ldap-body">
                                     </tbody>
                                 </table>
-                                <div class="mt-2 hidden" id="ldap-users-search-no-results" role="status">
-                                    <i class="fas fa-info mr-2 text-warning" aria-hidden="true"></i><?php echo $lang->get('no_item_to_display'); ?>
+                                <div class="mt-2 px-3 hidden" id="ldap-users-search-no-results" role="status">
+                                    <i class="fa-solid fa-info mr-2 text-warning" aria-hidden="true"></i><?php echo $lang->get('no_item_to_display'); ?>
                                 </div>
                             </div>
                         </div>
