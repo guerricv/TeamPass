@@ -9161,8 +9161,8 @@ function getUserVisibleFolders(int $userId): array
 }
 
 /**
- * Build visible folders on-the-fly when cache is not available
- * This is a fallback for newly created users whose cache hasn't been built yet
+ * Build the current user's visible folders while the cache is unavailable.
+ * Uses the permission scope already resolved by core.php for this request.
  *
  * @param int $userId User ID
  * @return array Array of visible folders with metadata
@@ -9170,46 +9170,20 @@ function getUserVisibleFolders(int $userId): array
 function buildVisibleFoldersOnTheFly(int $userId): array
 {
     $html = [];
-
-    // Get user's roles
-    $userRoles = DB::queryFirstColumn(
-        'SELECT role_id FROM ' . prefixTable('users_roles') . ' WHERE user_id = %i',
-        $userId
-    );
-
-    $visibleFolderIds = [];
-
-    // Get folders accessible via roles
-    if (!empty($userRoles)) {
-        $roleFolders = DB::query(
-            'SELECT DISTINCT folder_id FROM ' . prefixTable('roles_values') . ' WHERE role_id IN %ls AND type IN %ls',
-            $userRoles,
-            ['W', 'ND', 'NE', 'NDNE', 'R']
-        );
-        foreach ($roleFolders as $row) {
-            $visibleFolderIds[] = intval($row['folder_id']);
-        }
+    $session = SessionManager::getSession();
+    if ($userId !== (int) $session->get('user-id')) {
+        return $html;
     }
 
-    // Get folders directly allowed to the user via users_groups
-    $userGroups = DB::queryFirstColumn(
-        'SELECT group_id FROM ' . prefixTable('users_groups') . ' WHERE user_id = %i',
-        $userId
-    );
-    foreach ($userGroups as $groupId) {
-        $visibleFolderIds[] = intval($groupId);
-    }
-
-    // Get user's personal folder if it exists
-    $personalFolder = DB::queryFirstRow(
-        'SELECT id FROM ' . prefixTable('nested_tree') . ' WHERE title = %s AND personal_folder = 1',
-        (string) $userId
-    );
-    if (!empty($personalFolder)) {
-        $visibleFolderIds[] = intval($personalFolder['id']);
-    }
-
-    $visibleFolderIds = array_unique($visibleFolderIds);
+    // core.php has already resolved roles, direct grants, denials and personal
+    // descendants for this request. Reuse that scope while the cache is empty.
+    $visibleFolderIds = array_values(array_diff(
+        array_unique(array_map('intval', (array) $session->get('user-accessible_folders'))),
+        array_map('intval', (array) $session->get('user-no_access_folders')),
+        array_map('intval', (array) $session->get('user-forbiden_personal_folders'))
+    ));
+    $personalFolderIds = array_flip(array_map('intval', (array) $session->get('user-personal_folders')));
+    $readOnlyFolderIds = array_flip(array_map('intval', (array) $session->get('user-read_only_folders')));
 
     // Build the visible folders array with metadata
     foreach ($visibleFolderIds as $folderId) {
@@ -9223,11 +9197,11 @@ function buildVisibleFoldersOnTheFly(int $userId): array
                 "id" => $folderId,
                 "level" => 0, // Simplified - exact level not critical for access check
                 "title" => $folderInfo['title'],
-                "disabled" => 0,
+                "disabled" => isset($readOnlyFolderIds[$folderId]) ? 1 : 0,
                 "parent_id" => $folderInfo['parent_id'],
-                "perso" => $folderInfo['personal_folder'],
+                "perso" => isset($personalFolderIds[$folderId]) ? 1 : 0,
                 "path" => "",
-                "is_visible_active" => 1,
+                "is_visible_active" => isset($readOnlyFolderIds[$folderId]) ? 1 : 0,
             ];
         }
     }

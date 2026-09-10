@@ -8053,14 +8053,17 @@ function cacheTreeUserHandler(int $user_id, string $data, array $SETTINGS, strin
     );
 
     if (is_null($userCacheId) === true || count($userCacheId) === 0) {
-        // Insert new cache entry
+        // A dropdown-only refresh must not be stored as jstree data on a cache miss.
         $insertData = array(
-            'data' => $data,
-            'timestamp' => time(),
+            'data' => empty($field_update) ? $data : '[]',
+            'timestamp' => empty($field_update) ? time() : 0,
             'user_id' => $user_id,
             'visible_folders' => $visible_folders,
             'invalidated_at' => 0,
         );
+        if (!empty($field_update)) {
+            $insertData[$field_update] = $data;
+        }
         DB::insert(
             prefixTable('cache_tree'),
             $insertData
@@ -8095,6 +8098,42 @@ function cacheTreeUserHandler(int $user_id, string $data, array $SETTINGS, strin
 }
 
 /**
+ * Discard every representation of the folder cache for the given users.
+ *
+ * A partial writer (API folder IDs or dropdowns) must not make an old tree valid
+ * by advancing the shared timestamp. Empty payloads also invalidate changes
+ * made in the same second as the last build. The normal readers rebuild them
+ * using their existing permission checks, without requiring a WebSocket event.
+ *
+ * @param array $userIds User IDs whose cached folders must be rebuilt
+ * @return void
+ */
+function invalidateUserFolderCache(array $userIds): void
+{
+    $userIds = array_values(array_unique(array_filter(
+        array_map('intval', $userIds),
+        static fn (int $userId): bool => $userId > 0
+    )));
+    if (empty($userIds)) {
+        return;
+    }
+
+    loadClasses('DB');
+    DB::update(
+        prefixTable('cache_tree'),
+        [
+            'data' => '[]',
+            'visible_folders' => '[]',
+            'folders' => '[]',
+            'timestamp' => 0,
+            'invalidated_at' => time(),
+        ],
+        'user_id IN %li',
+        $userIds
+    );
+}
+
+/**
  * Invalidate tree cache for all users who have access to a specific folder.
  * Replaces global last_folder_change with targeted per-user invalidation.
  *
@@ -8117,6 +8156,10 @@ function invalidateCacheForFolderUsers(int $folderId, array $additionalUserIds =
             WHERE rv.folder_id = %i',
             $folderId
         );
+        $affectedUsers = array_merge($affectedUsers, DB::queryFirstColumn(
+            'SELECT user_id FROM ' . prefixTable('users_groups') . ' WHERE group_id = %i',
+            $folderId
+        ));
     }
 
     // Merge with additional users (personal folder owner, etc.)
@@ -8130,15 +8173,7 @@ function invalidateCacheForFolderUsers(int $folderId, array $additionalUserIds =
     );
     $affectedUsers = array_unique(array_merge($affectedUsers, $adminUsers));
 
-    if (!empty($affectedUsers)) {
-        DB::query(
-            'UPDATE ' . prefixTable('cache_tree') . '
-            SET invalidated_at = %i
-            WHERE user_id IN %ls',
-            time(),
-            $affectedUsers
-        );
-    }
+    invalidateUserFolderCache($affectedUsers);
 
     // Keep global last_folder_change as fallback for backward compatibility
     DB::update(
