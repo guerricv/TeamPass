@@ -282,6 +282,36 @@ PHP);
         self::assertSame(0400, fileperms($path) & 0777);
     }
 
+    /** The log appender follows the same policy and never rewrites history. */
+    public function testAppendPreservesStrictModesAndExistingContents(): void
+    {
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/teampass_tasks.log';
+        self::assertSame(9, file_put_contents($path, "line one\n"));
+        self::assertTrue(chmod($path, 0600));
+        $inode = fileinode($path);
+
+        $previousMask = umask(0022);
+        try {
+            self::assertTrue(tpAppendRuntimeFile($path, "line two\n"));
+        } finally {
+            umask($previousMask);
+        }
+
+        clearstatcache(true, $path);
+        self::assertSame(0600, fileperms($path) & 0777, 'A stricter deployment mode must survive.');
+        self::assertSame($inode, fileinode($path));
+        self::assertSame("line one\nline two\n", file_get_contents($path));
+    }
+
+    /** The appender inherits every target rejection from the opener. */
+    public function testAppendRejectsInvalidTargets(): void
+    {
+        self::assertFalse(tpAppendRuntimeFile($this->root . '/missing/teampass_tasks.log', 'x'));
+        self::assertFalse(tpAppendRuntimeFile($this->root . '/storage/logs', 'x'));
+        self::assertFalse(tpAppendRuntimeFile('php://memory', 'x'));
+    }
+
     /** Reject unsupported targets without leaving files or a changed process umask. */
     public function testInvalidTargetsFailWithoutChangingUmaskOrDirectoryContents(): void
     {

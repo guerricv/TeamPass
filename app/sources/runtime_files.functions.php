@@ -140,3 +140,47 @@ function tpWriteRuntimeFile(string $path, string $contents, bool &$wouldBlock = 
         fclose($handle);
     }
 }
+
+/**
+ * Resolve a configured runtime log path against a base directory.
+ *
+ * LOG_TASKS_FILE was a path relative to app/scripts/ before the storage/ layout
+ * and is absolute since. Prepending the base directory to an absolute value
+ * builds an unreachable path and silently disables logging, so only a relative
+ * value is resolved. Windows drive-qualified paths count as absolute.
+ */
+function tpResolveRuntimeLogPath(string $logFile, string $baseDirectory): string
+{
+    if (preg_match('~^(?:[A-Za-z]:[\\\\/]|[\\\\/])~', $logFile) === 1) {
+        return $logFile;
+    }
+
+    return rtrim($baseDirectory, '\\/') . DIRECTORY_SEPARATOR . $logFile;
+}
+
+/**
+ * Append to a trusted local runtime log using the same permissions as locks.
+ *
+ * Wait for a competing writer, unlike the signal writer: every producer is a
+ * background CLI process, never a web request, and a dropped log line would
+ * hide exactly what the log is read for.
+ */
+function tpAppendRuntimeFile(string $path, string $contents): bool
+{
+    $handle = tpOpenRuntimeFile($path);
+    if ($handle === false) {
+        return false;
+    }
+
+    try {
+        // Seek under the lock: the open position is the start of the file.
+        if (@flock($handle, LOCK_EX) === false || @fseek($handle, 0, SEEK_END) !== 0) {
+            return false;
+        }
+
+        return @fwrite($handle, $contents) === strlen($contents) && @fflush($handle);
+    } finally {
+        // Closing releases the advisory lock on both success and failure.
+        fclose($handle);
+    }
+}

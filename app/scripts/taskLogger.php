@@ -26,6 +26,8 @@
  * @see       https://www.teampass.net
  */
 
+require_once __DIR__ . '/../sources/runtime_files.functions.php';
+
 /**
  * Class TaskLogger
  * Handles logging for background tasks in TeamPass
@@ -51,8 +53,12 @@ class TaskLogger {
                                 " - [$level] $message" . PHP_EOL;
 
             if (!empty($this->logFile)) {
-                // WWrite to the specified log file
-                file_put_contents(__DIR__.'/'.$this->logFile, $formattedMessage, FILE_APPEND | LOCK_EX);
+                // Write to the specified log file, with the runtime file
+                // permission policy so the log does not stay world readable.
+                tpAppendRuntimeFile(
+                    tpResolveRuntimeLogPath($this->logFile, __DIR__),
+                    $formattedMessage
+                );
             } else {
                 // Use default error log
                 error_log($formattedMessage);

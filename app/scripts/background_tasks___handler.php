@@ -971,6 +971,16 @@ class BackgroundTasksHandler {
             return false;
         }
 
+        // A finishing handler may have unlinked the lock between our open and
+        // our flock: we would then own an orphaned inode while the next handler
+        // creates a fresh file, locks it too and runs beside us. Detaching the
+        // path is the only way that happens, so compare the descriptor with it.
+        $lockStat = fstat($fp);
+        if ($lockStat === false || tpRuntimeFileMatchesPath($lockFile, $lockStat) === false) {
+            fclose($fp);
+            return false;
+        }
+
         // Only the lock owner may replace the PID; a contending handler must
         // not truncate the running handler's file while trying to acquire it.
         $pid = (string) getmypid();
@@ -987,16 +997,24 @@ class BackgroundTasksHandler {
      * Release the lock file.
      */
     private function releaseProcessLock(): void {
-        if ($this->lockFileHandle !== null) {
-            flock($this->lockFileHandle, LOCK_UN);
-            fclose($this->lockFileHandle);
-            $this->lockFileHandle = null;
+        if ($this->lockFileHandle === null) {
+            // The lock was never acquired, so the file on disk belongs to
+            // another handler: removing it would let a third one run beside it.
+            return;
         }
 
+        // Unlink while the lock is still held, and only when the path still
+        // names the very inode we own. A contender cannot then acquire what we
+        // are about to detach, which closes the other half of the same race.
         $lockFile = !empty(TASKS_LOCK_FILE) ? TASKS_LOCK_FILE : (defined('TEAMPASS_STORAGE') ? TEAMPASS_STORAGE . '/logs/teampass_background_tasks.lock' : __DIR__ . '/../../storage/logs/teampass_background_tasks.lock');
-        if (file_exists($lockFile)) {
+        $lockStat = fstat($this->lockFileHandle);
+        if ($lockStat !== false && tpRuntimeFileMatchesPath($lockFile, $lockStat)) {
             unlink($lockFile);
         }
+
+        flock($this->lockFileHandle, LOCK_UN);
+        fclose($this->lockFileHandle);
+        $this->lockFileHandle = null;
     }
 
     /**
