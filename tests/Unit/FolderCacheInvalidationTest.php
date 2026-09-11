@@ -117,7 +117,7 @@ class FolderCacheInvalidationTest extends TestCase
         $access = $this->body($source, 'getCurrentAccessRights');
         foreach (['getItemRestrictedUsersList(', 'isProcessOnGoing(', "get('user-read_only_folders')", "get('user-allowed_folders_by_definition')"] as $shortcut) {
             $this->before($access, 'refreshUserFolderPermissionScope(', $shortcut);
-            $this->before($access, 'folderCacheVisibleScope(', $shortcut);
+            $this->before($access, 'itemAccessFolderIsInScope(', $shortcut);
         }
         $fallback = $this->body($source, 'buildVisibleFoldersOnTheFly');
         $this->before($fallback, 'refreshUserFolderPermissionScope(', 'folderCacheVisibleScope(');
@@ -133,7 +133,7 @@ class FolderCacheInvalidationTest extends TestCase
         $access = $this->body($this->source('app/sources/items.queries.php'), 'getCurrentAccessRights');
         $adminCheck = "if ((int) \$session->get('user-admin') === 1) {\n        return getAccessResponse(false, false, false, false);";
         self::assertStringContainsString($adminCheck, $access);
-        $this->before($access, 'folderCacheVisibleScope(', $adminCheck);
+        $this->before($access, 'itemAccessFolderIsInScope(', $adminCheck);
         $this->before($access, $adminCheck, 'getItemRestrictedUsersList(');
     }
 

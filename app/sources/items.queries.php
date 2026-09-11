@@ -46,6 +46,7 @@ require_once 'main.functions.php';
 require_once 'find.functions.php';
 require_once 'classification.functions.php';
 require_once 'lapr.functions.php';
+require_once __DIR__ . '/item_access_logic.php';
 
 // init
 loadClasses('DB');
@@ -8708,14 +8709,19 @@ function getCurrentAccessRights(int $userId, int $itemId, int $treeId, string $a
 {
     $session = SessionManager::getSession();
 
+    // Only a folder of the user's freshly resolved scope can authorize its items. The
+    // cached visible folders also list the blocked ancestors of accessible folders, so
+    // being in that list must never be enough on its own.
     $configManager = new ConfigManager();
     if ($userId !== (int) $session->get('user-id')
         || refreshUserFolderPermissionScope($configManager->getAllSettings()) === false
-        || !in_array($treeId, folderCacheVisibleScope(
+        || itemAccessFolderIsInScope(
+            $treeId,
             (array) $session->get('user-accessible_folders'),
+            (array) $session->get('user-personal_folders'),
             (array) $session->get('user-no_access_folders'),
             (array) $session->get('user-forbiden_personal_folders')
-        ), true)
+        ) === false
     ) {
         return getAccessResponse(false, false, false, false);
     }
