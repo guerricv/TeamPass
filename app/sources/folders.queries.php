@@ -346,8 +346,9 @@ if (null !== $post_type) {
                 'parentId' => isset($dataReceived['parentId']) === true ? $dataReceived['parentId'] : 0,
                 'complexity' => isset($dataReceived['complexity']) === true ? $dataReceived['complexity'] : '',
                 'duration' => isset($dataReceived['renewalPeriod']) === true ? $dataReceived['renewalPeriod'] : 0,
-                'create_auth_without' => isset($dataReceived['addRestriction']) === true ? $dataReceived['addRestriction'] : 0,
-                'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? $dataReceived['editRestriction'] : 0,
+                // The Items page omits these fields; -1 preserves the stored options on update.
+                'create_auth_without' => isset($dataReceived['addRestriction']) === true ? $dataReceived['addRestriction'] : -1,
+                'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? $dataReceived['editRestriction'] : -1,
                 'icon' => isset($dataReceived['icon']) === true ? $dataReceived['icon'] : '',
                 'icon_selected' => isset($dataReceived['iconSelected']) === true ? $dataReceived['iconSelected'] : '',
                 'access_rights' => isset($dataReceived['accessRight']) === true ? $dataReceived['accessRight'] : 'W',
@@ -815,8 +816,9 @@ if (null !== $post_type) {
                 'personal_folder' => (int) $isPersonal,
                 'complexity' => (int) $inputData['complexity'],
                 'duration' => (int) $inputData['duration'],
-                'create_auth_without' => (int) $inputData['create_auth_without'],
-                'edit_auth_without' => (int) $inputData['edit_auth_without'],
+                // Null lets FolderManager inherit the parent; an explicit 0 disables the option.
+                'create_auth_without' => isset($dataReceived['addRestriction']) ? (int) $inputData['create_auth_without'] : null,
+                'edit_auth_without' => isset($dataReceived['editRestriction']) ? (int) $inputData['edit_auth_without'] : null,
                 'icon' => (string) $inputData['icon'],
                 'icon_selected' => (string) $inputData['icon_selected'],
                 'access_rights' => (string) $inputData['access_rights'],
@@ -886,8 +888,8 @@ if (null !== $post_type) {
                         ]
                         : '',
                     'renewalPeriod'  => (int) ($inputData['duration'] ?? 0),
-                    'add_is_blocked' => (int) ($inputData['create_auth_without'] ?? 0),
-                    'edit_is_blocked'=> (int) ($inputData['edit_auth_without'] ?? 0),
+                    'add_is_blocked' => (int) $newNode->bloquer_creation,
+                    'edit_is_blocked'=> (int) $newNode->bloquer_modification,
                     'icon'           => empty($inputData['icon']) ? TP_DEFAULT_ICON : $inputData['icon'],
                     'iconSelected'   => empty($inputData['icon_selected']) ? TP_DEFAULT_ICON_SELECTED : $inputData['icon_selected'],
                 ];
