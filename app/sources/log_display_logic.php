@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use TeampassClasses\Language\Language;
+
 /**
  * Teampass - a collaborative passwords manager.
  * ---
@@ -61,4 +63,50 @@ if (function_exists('normalizeLogDisplayValue') === false) {
 
         return htmlspecialchars($decodedValue, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8', false);
     }
+}
+
+/**
+ * Resolve a knowledge-base log row's display fields without database access.
+ * The handler normalizes these fields before sending them to the text renderer.
+ *
+ * @return array
+ */
+function formatKnowledgeBaseLogRow(array $row, array $user, Language $lang): array
+{
+    $reasonKeys = [
+        'label' => 'label',
+        'category' => 'category',
+        'description' => 'description',
+        'anyone_can_modify' => 'anyone_can_modify',
+        'allow_comments' => 'kb_allow_comments',
+        'associated_items' => 'kb_associated_items',
+        'attachments_upload' => 'kb_attachment_uploaded',
+        'attachments_delete' => 'kb_attachment_deleted',
+        'comment_add' => 'kb_comment_added',
+        'comment_delete' => 'kb_comment_deleted',
+    ];
+    $fullName = trim(trim((string) ($user['name'] ?? '')) . ' ' . trim((string) ($user['lastname'] ?? '')));
+    $login = (string) ($user['login'] ?? $row['user_login'] ?? '');
+    $row['user_display'] = $fullName === '' ? $login : $fullName . ($login === '' ? '' : ' [' . $login . ']');
+    $row['action_display'] = $lang->get((string) ($row['action'] ?? ''));
+    $row['reason_display'] = implode(', ', array_map(
+        static fn (string $reason): string => isset($reasonKeys[$reason]) ? (string) $lang->get($reasonKeys[$reason]) : $reason,
+        explode(', ', (string) ($row['reason'] ?? ''))
+    ));
+
+    return $row;
+}
+
+/**
+ * Match the displayed knowledge-base log values, including translated actions and details.
+ */
+function knowledgeBaseLogRowMatchesSearch(array $row, string $searchValue): bool
+{
+    if ($searchValue === '') {
+        return true;
+    }
+    $haystack = (string) ($row['label'] ?? '') . ' ' . (string) ($row['user_display'] ?? '') . ' '
+        . (string) ($row['action_display'] ?? '') . ' ' . (string) ($row['reason_display'] ?? '');
+
+    return mb_stripos($haystack, $searchValue, 0, 'UTF-8') !== false;
 }

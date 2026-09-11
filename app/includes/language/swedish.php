@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Alla kolumner',
+    'logs_search_column' => 'Sök i kolumn',
+    'logs_purge_title' => 'Radera loggposter',
+    'logs_purge_help' => 'Radera loggposter från den aktiva fliken permanent enligt kriterierna nedan. Dessa kriterier filtrerar inte tabellen. Använd sökfältet ovanför tabellen för att filtrera loggposterna som visas.',
+    'logs_purge_criteria' => 'Raderingskriterier',
+    'logs_purge_confirm' => 'Jag bekräftar permanent radering av loggposterna som matchar dessa kriterier på den aktiva fliken.',
+    'logs_purge_submit' => 'Radera matchande loggposter',
     'show_user_temporary_encryption_code' => 'Visa användares krypteringsnyckel',
     'email_body_new_user' => 'Hej, <br><br>Detta är ett automatiskt utskick från Teampass lösenordshanterare. <br><br>En administratör har skapat ett användarkonto till dig. Nästa gång du vill logga in i Teampass så använd dina uppgifter: <ul><li>Användarnamn: #login# </li><li>Lösenord: #password# </li></ul><br><br><br>Välkommen',
     'user_password' => 'Användarens Lösenord',

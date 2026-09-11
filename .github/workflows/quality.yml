@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PHP_EXTENSIONS: openssl, mysqli, mbstring, bcmath, iconv, xml, gd, curl, gmp, ldap
+  PHP_EXTENSIONS: openssl, mysqli, mbstring, bcmath, iconv, xml, gd, curl, gmp, ldap, sqlite3
 
 jobs:
   autoloader-guard:

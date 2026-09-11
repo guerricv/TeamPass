@@ -91,8 +91,6 @@ class ClientHtmlEncodingSentinelTest extends TestCase
         // safe — showUsersActionModal() is fed by six local call sites, each passing a
         // language string plus a page-owned <i> icon and a numeric count
         'app/pages/users.js.php' => ['opts.title', 'opts.message'],
-        // safe — opt.title comes from a static local array of column labels
-        'app/pages/utilities.logs.js.php' => ['opt.title'],
         // safe — info comes from the static client-side LEVELS map
         'app/core/item-classification.js.php' => ['info.label'],
         // safe — item.login is returned as a string by a Select2 templateSelection, which

@@ -40,6 +40,7 @@ use voku\helper\AntiXSS;
 
 // Load functions
 require_once 'main.functions.php';
+require_once __DIR__ . '/logs_filter_logic.php';
 
 /**
  * Encode a single value as a safe JSON string literal for the manually built DataTables output.
@@ -583,13 +584,7 @@ if (isset($params['action']) && $params['action'] === 'connections') {
     }
 
     // Filtering
-    $sWhere = new WhereClause('AND');
-    if ($searchValue !== '') {
-        $subclause = $sWhere->addClause('OR');
-        foreach ($aColumns as $column) {
-            $subclause->add($column.' LIKE %ss', $searchValue);
-        }
-    }
+    $sWhere = buildItemLogSearchFilter($params['search']['column'] ?? 'all', $searchValue, $lang);
 
     // Get the total number of records
     $iTotal = DB::queryFirstField(

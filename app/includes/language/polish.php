@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Wszystkie kolumny',
+    'logs_search_column' => 'Szukaj w kolumnie',
+    'logs_purge_title' => 'Usuń wpisy dziennika',
+    'logs_purge_help' => 'Trwale usuń wpisy dziennika z aktywnej karty według poniższych kryteriów. Te kryteria nie filtrują tabeli. Aby filtrować wyświetlane wpisy, użyj pola wyszukiwania nad tabelą.',
+    'logs_purge_criteria' => 'Kryteria usuwania',
+    'logs_purge_confirm' => 'Potwierdzam trwałe usunięcie wpisów dziennika spełniających te kryteria w aktywnej karcie.',
+    'logs_purge_submit' => 'Usuń pasujące wpisy dziennika',
     'show_user_temporary_encryption_code' => 'Wyświetl kod szyfrowania użytkownika',
     'email_body_new_user' => 'Witaj,<br><br>Ten email został wygenerowany przez system zarządzania haseł Teampass.<br><br>Administrator utworzył dla Ciebie hasło w systemie. Przy następnym logowaniu do systemu Teampass, użyj następujących poświadczeń:<ul><li>login: #login#</li><li>Password: #password#</li></ul><br><br><br>Pozdrawiam.',
     'user_password' => 'Hasło użytkownika',

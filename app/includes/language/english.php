@@ -29,6 +29,13 @@
  */
 
 return array(
+    'logs_search_all_columns' => 'All columns',
+    'logs_search_column' => 'Search in column',
+    'logs_purge_title' => 'Purge logs',
+    'logs_purge_help' => 'Permanently delete logs from the active tab using the criteria below. These criteria do not filter the table. To filter the displayed logs, use the search field above the table.',
+    'logs_purge_criteria' => 'Deletion criteria',
+    'logs_purge_confirm' => 'I confirm the permanent deletion of logs matching these criteria in the active tab.',
+    'logs_purge_submit' => 'Delete matching logs',
     'restore_missing_sharekeys' => 'Restore missing sharekeys',
     'restore_missing_sharekeys_tip' => 'This tool detects and recreates missing encryption sharekeys (items, custom fields and files). Users without a sharekey see the object but cannot decrypt it (crossed-out password icon). The analysis is a read-only pass. The repair first restores the missing TP internal account reference keys using your own account, then a background task distributes the missing keys to every user. Only missing keys are created - existing keys are never modified. Personal items are handled separately: their key is rebuilt for their owner alone, never distributed.',
     'restore_missing_sharekeys_analyze' => 'Analyze',

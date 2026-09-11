@@ -2243,20 +2243,27 @@ switch ($type) {
         $rows = kbLoadLogRows();
         $recordsTotal = count($rows);
 
-        $filteredRows = array_values(array_filter($rows, static function (array $row) use ($searchValue): bool {
-            if ($searchValue === '') {
-                return true;
-            }
-
-            $haystack = mb_strtolower(
-                (string) ($row['label'] ?? '') . ' ' .
-                (string) ($row['user_login'] ?? '') . ' ' .
-                (string) ($row['action'] ?? '') . ' ' .
-                (string) ($row['reason'] ?? '')
+        $userIds = array_values(array_unique(array_filter(array_column($rows, 'user_id'), static fn (int $id): bool => $id > 0)));
+        $usersById = [];
+        if (!empty($userIds)) {
+            $users = DB::query(
+                'SELECT id, login, name, lastname FROM ' . prefixTable('users') . ' WHERE id IN %li',
+                $userIds
             );
+            foreach ($users as $user) {
+                $usersById[(int) $user['id']] = $user;
+            }
+        }
 
-            return mb_strpos($haystack, mb_strtolower($searchValue)) !== false;
-        }));
+        foreach ($rows as &$row) {
+            $row = formatKnowledgeBaseLogRow($row, $usersById[$row['user_id']] ?? [], $lang);
+        }
+        unset($row);
+
+        $filteredRows = array_values(array_filter(
+            $rows,
+            static fn (array $row): bool => knowledgeBaseLogRowMatchesSearch($row, $searchValue)
+        ));
 
         $recordsFiltered = count($filteredRows);
         $pagedRows = array_slice($filteredRows, $start, $length);
@@ -2265,9 +2272,9 @@ switch ($type) {
             $dataRows[] = [
                 date(($SETTINGS['date_format'] ?? 'Y-m-d') . ' ' . ($SETTINGS['time_format'] ?? 'H:i:s'), (int) ($row['date'] ?? time())),
                 normalizeLogDisplayValue($row['label'] ?? ''),
-                normalizeLogDisplayValue($row['user_login'] ?? ''),
-                normalizeLogDisplayValue($row['action'] ?? ''),
-                normalizeLogDisplayValue($row['reason'] ?? ''),
+                normalizeLogDisplayValue($row['user_display'] ?? ''),
+                normalizeLogDisplayValue($row['action_display'] ?? ''),
+                normalizeLogDisplayValue($row['reason_display'] ?? ''),
             ];
         }
 

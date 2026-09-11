@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Tüm sütunlar',
+    'logs_search_column' => 'Sütunda ara',
+    'logs_purge_title' => 'Günlükleri temizle',
+    'logs_purge_help' => 'Aşağıdaki ölçütleri kullanarak etkin sekmedeki günlük kayıtlarını kalıcı olarak silin. Bu ölçütler tabloyu filtrelemez. Görüntülenen günlük kayıtlarını filtrelemek için tablonun üstündeki arama alanını kullanın.',
+    'logs_purge_criteria' => 'Silme ölçütleri',
+    'logs_purge_confirm' => 'Etkin sekmede bu ölçütlerle eşleşen günlük kayıtlarının kalıcı olarak silinmesini onaylıyorum.',
+    'logs_purge_submit' => 'Eşleşen günlük kayıtlarını sil',
     'show_user_temporary_encryption_code' => 'Kullanıcı şifreleme kodunu göster',
     'email_body_new_user' => 'Merhaba,<br><br>Bu, Teampass şifre yöneticisinden oluşturulan bir e-postadır.<br><br>Bir yönetici Teampass’te sizin için bir kullanıcı hesabı oluşturdu. Teampass’e bir dahaki bağlantınızda lütfen şu kimlik bilgilerini kullanın:<ul><li>giriş: #login#</li><li>Şifre: #password#</li></ul><br><br><br>Saygılarımızla',
     'user_password' => 'Kullanıcı şifresi',

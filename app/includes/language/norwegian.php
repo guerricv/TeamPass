@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Alle kolonner',
+    'logs_search_column' => 'Søk i kolonne',
+    'logs_purge_title' => 'Slett logger',
+    'logs_purge_help' => 'Slett loggoppføringer fra den aktive fanen permanent basert på kriteriene nedenfor. Disse kriteriene filtrerer ikke tabellen. Bruk søkefeltet over tabellen for å filtrere loggoppføringene som vises.',
+    'logs_purge_criteria' => 'Slettekriterier',
+    'logs_purge_confirm' => 'Jeg bekrefter permanent sletting av loggoppføringene som samsvarer med disse kriteriene i den aktive fanen.',
+    'logs_purge_submit' => 'Slett samsvarende loggoppføringer',
     'show_user_temporary_encryption_code' => 'Vis brukerkrypteringskode',
     'email_body_new_user' => 'Hello,<br><br>This is a generated email from Teampass passwords manager.<br><br>An administrator has created for you a user account on Teampass. Next time you will connect to Teampass, please use next credentials:<ul><li>login: #login#</li><li>Password: #password#</li></ul><br><br><br>Cheers',
     'user_password' => 'Brukerpassord',

@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Alle Spalten',
+    'logs_search_column' => 'In Spalte suchen',
+    'logs_purge_title' => 'Protokolle bereinigen',
+    'logs_purge_help' => 'Löschen Sie die Protokolleinträge des aktiven Tabs anhand der folgenden Kriterien endgültig. Diese Kriterien filtern die Tabelle nicht. Verwenden Sie das Suchfeld oberhalb der Tabelle, um die angezeigten Protokolleinträge zu filtern.',
+    'logs_purge_criteria' => 'Löschkriterien',
+    'logs_purge_confirm' => 'Ich bestätige die endgültige Löschung der Protokolleinträge im aktiven Tab, die diesen Kriterien entsprechen.',
+    'logs_purge_submit' => 'Passende Protokolleinträge löschen',
     'show_user_temporary_encryption_code' => 'Benutzer-Verschlüsselungscode anzeigen',
     'email_body_new_user' => 'Hallo,<br><br>dies ist eine generierte E-Mail von Teampass Password Manager.<br><br> Ein Administrator hat für Sie ein Benutzerkonto auf Teampass erstellt. Wenn Sie sich das nächste Mal mit Teampass verbinden, verwenden Sie bitte die folgenden Anmeldedaten: <ul><li>login: #login#</li><li>Kennwort: #password#</li></ul><br><br><br>Grüße',
     'user_password' => 'Benutzerpasswort',

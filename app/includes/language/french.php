@@ -26,6 +26,13 @@
  * @see       https://www.teampass.net
  */
 return array(
+    'logs_search_all_columns' => 'Toutes les colonnes',
+    'logs_search_column' => 'Rechercher dans la colonne',
+    'logs_purge_title' => 'Purger les journaux',
+    'logs_purge_help' => 'Supprimez définitivement les journaux de l’onglet actif selon les critères ci-dessous. Ces critères ne filtrent pas le tableau. Pour filtrer les journaux affichés, utilisez le champ de recherche au-dessus du tableau.',
+    'logs_purge_criteria' => 'Critères de suppression',
+    'logs_purge_confirm' => 'Je confirme la suppression définitive des journaux correspondant à ces critères dans l’onglet actif.',
+    'logs_purge_submit' => 'Supprimer les journaux correspondants',
     'show_user_temporary_encryption_code' => 'Afficher le code de chiffrement de l’utilisateur',
     'email_body_new_user' => 'Bonjour,<br><br>Ceci est un mail généré par le gestionnaire de mot de passe Teampass.<br><br>Un administrateur vous a créé un compte utilisateur sur Teampass. Lors de votre prochaine connexion, veuillez utiliser les identifiants suivants :<ul><li>Login: #login#</li><li>Mot de passe: #password#</li></ul><br><br>Cordialement',
     'user_password' => 'Mot de passe utilisateur',
