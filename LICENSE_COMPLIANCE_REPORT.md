@@ -1,6 +1,6 @@
 # Teampass License Compliance Report
 
-**Generated:** 2026-08-18 08:28:46
+**Generated:** 2026-09-11 19:49:53
 **Project License:** GNU General Public License v3.0
 
 ## PHP Dependencies (Composer)
@@ -9,11 +9,11 @@
 |---------|---------|---------|--------|
 | bjeavons/zxcvbn-php | 1.4.2 | MIT | ✅ Compatible |
 | brick/math | 0.12.3 | MIT | ✅ Compatible |
-| carbonphp/carbon-doctrine-types | 3.2.0 | MIT | ✅ Compatible |
+| carbonphp/carbon-doctrine-types | 3.2.1 | MIT | ✅ Compatible |
 | cboden/ratchet | v0.4.4 | MIT | ✅ Compatible |
-| composer/ca-bundle | 1.5.13 | MIT | ✅ Compatible |
+| composer/ca-bundle | 1.5.14 | MIT | ✅ Compatible |
 | composer/class-map-generator | 1.7.3 | MIT | ✅ Compatible |
-| composer/composer | 2.10.2 | MIT | ✅ Compatible |
+| composer/composer | 2.10.3 | MIT | ✅ Compatible |
 | composer/metadata-minifier | 1.0.1 | MIT | ✅ Compatible |
 | composer/pcre | 3.4.0 | MIT | ✅ Compatible |
 | composer/semver | 3.4.4 | MIT | ✅ Compatible |
@@ -33,9 +33,9 @@
 | ezyang/htmlpurifier | v4.19.0 | LGPL-2.1-or-later | ✅ Compatible |
 | firebase/php-jwt | v7.1.0 | BSD-3-Clause | ✅ Compatible |
 | goodby/csv | 1.3.0 | MIT | ✅ Compatible |
-| guzzlehttp/guzzle | 7.15.3 | MIT | ✅ Compatible |
-| guzzlehttp/promises | 2.5.2 | MIT | ✅ Compatible |
-| guzzlehttp/psr7 | 2.13.0 | MIT | ✅ Compatible |
+| guzzlehttp/guzzle | 7.15.5 | MIT | ✅ Compatible |
+| guzzlehttp/promises | 2.5.3 | MIT | ✅ Compatible |
+| guzzlehttp/psr7 | 2.13.1 | MIT | ✅ Compatible |
 | hackzilla/password-generator | 1.7.0 | MIT | ✅ Compatible |
 | illuminate/collections | v10.49.0 | MIT | ✅ Compatible |
 | illuminate/conditionable | v10.49.0 | MIT | ✅ Compatible |
@@ -46,7 +46,7 @@
 | illuminate/support | v10.49.0 | MIT | ✅ Compatible |
 | illuminate/translation | v10.49.0 | MIT | ✅ Compatible |
 | illuminate/validation | v10.49.0 | MIT | ✅ Compatible |
-| justinrainbow/json-schema | 6.10.0 | MIT | ✅ Compatible |
+| justinrainbow/json-schema | 6.12.0 | MIT | ✅ Compatible |
 | league/oauth2-client | 2.9.0 | MIT | ✅ Compatible |
 | marc-mabe/php-enum | v4.7.2 | BSD-3-Clause | ✅ Compatible |
 | moxiecode/plupload | v3.1.5 | (GPL-2.0 or OEM) | ✅ Compatible |
@@ -57,7 +57,7 @@
 | paragonie/random_compat | v9.99.100 | MIT | ✅ Compatible |
 | peppeocchi/php-cron-scheduler | v4.0 | MIT | ✅ Compatible |
 | phpmailer/phpmailer | v6.12.0 | LGPL-2.1-only | ✅ Compatible |
-| phpseclib/phpseclib | 3.0.56 | MIT | ✅ Compatible |
+| phpseclib/phpseclib | 3.0.57 | MIT | ✅ Compatible |
 | psr/cache | 3.0.0 | MIT | ✅ Compatible |
 | psr/clock | 1.0.0 | MIT | ✅ Compatible |
 | psr/container | 2.0.2 | MIT | ✅ Compatible |
@@ -81,18 +81,18 @@
 | seld/signal-handler | 2.0.2 | MIT | ✅ Compatible |
 | sergeytsalkov/meekrodb | v2.5.2 | LGPL-3.0 | ✅ Compatible |
 | spomky-labs/otphp | 11.5.0 | MIT | ✅ Compatible |
-| symfony/console | v6.4.43 | MIT | ✅ Compatible |
-| symfony/contracts | v3.7.2 | MIT | ✅ Compatible |
-| symfony/filesystem | v7.4.15 | MIT | ✅ Compatible |
-| symfony/finder | v6.4.42 | MIT | ✅ Compatible |
-| symfony/http-foundation | v6.4.43 | MIT | ✅ Compatible |
-| symfony/mime | v6.4.43 | MIT | ✅ Compatible |
+| symfony/console | v6.4.45 | MIT | ✅ Compatible |
+| symfony/contracts | v3.7.3 | MIT | ✅ Compatible |
+| symfony/filesystem | v7.4.18 | MIT | ✅ Compatible |
+| symfony/finder | v6.4.44 | MIT | ✅ Compatible |
+| symfony/http-foundation | v6.4.45 | MIT | ✅ Compatible |
+| symfony/mime | v6.4.45 | MIT | ✅ Compatible |
 | symfony/password-hasher | v6.4.32 | MIT | ✅ Compatible |
 | symfony/polyfill-ctype | v1.37.0 | MIT | ✅ Compatible |
 | symfony/polyfill-iconv | v1.37.0 | MIT | ✅ Compatible |
 | symfony/polyfill-intl-grapheme | v1.41.0 | MIT | ✅ Compatible |
-| symfony/polyfill-intl-idn | v1.38.1 | MIT | ✅ Compatible |
-| symfony/polyfill-intl-normalizer | v1.38.0 | MIT | ✅ Compatible |
+| symfony/polyfill-intl-idn | v1.42.0 | MIT | ✅ Compatible |
+| symfony/polyfill-intl-normalizer | v1.42.0 | MIT | ✅ Compatible |
 | symfony/polyfill-mbstring | v1.38.2 | MIT | ✅ Compatible |
 | symfony/polyfill-php72 | v1.31.0 | MIT | ✅ Compatible |
 | symfony/polyfill-php73 | v1.37.0 | MIT | ✅ Compatible |
@@ -100,10 +100,10 @@
 | symfony/polyfill-php81 | v1.38.1 | MIT | ✅ Compatible |
 | symfony/polyfill-php83 | v1.41.0 | MIT | ✅ Compatible |
 | symfony/polyfill-php84 | v1.38.1 | MIT | ✅ Compatible |
-| symfony/process | v6.4.41 | MIT | ✅ Compatible |
-| symfony/routing | v6.4.43 | MIT | ✅ Compatible |
+| symfony/process | v6.4.45 | MIT | ✅ Compatible |
+| symfony/routing | v6.4.45 | MIT | ✅ Compatible |
 | symfony/string | v7.4.15 | MIT | ✅ Compatible |
-| symfony/translation | v6.4.42 | MIT | ✅ Compatible |
+| symfony/translation | v6.4.44 | MIT | ✅ Compatible |
 | teampassclasses/configmanager | dev-composer-update | GPL-3.0-only | ✅ Compatible |
 | teampassclasses/cryptomanager | dev-composer-update | GPL-3.0-only | ✅ Compatible |
 | teampassclasses/emailservice | dev-composer-update | GPL-3.0-only | ✅ Compatible |
@@ -119,7 +119,7 @@
 | teampassclasses/performchecks | dev-composer-update | GPL-3.0-only | ✅ Compatible |
 | teampassclasses/sessionmanager | dev-composer-update | GPL-3.0-only | ✅ Compatible |
 | teampassclasses/superglobal | dev-composer-update | GPL-3.0-only | ✅ Compatible |
-| tecnickcom/tcpdf | 6.11.3 | LGPL-3.0-or-later | ✅ Compatible |
+| tecnickcom/tcpdf | 6.11.4 | LGPL-3.0-or-later | ✅ Compatible |
 | thenetworg/oauth2-azure | v2.2.6 | MIT | ✅ Compatible |
 | tiben/crontab-manager | v1.4.0 | Apache-2.0 | ✅ Compatible |
 | voku/anti-xss | 4.1.44 | MIT | ✅ Compatible |
@@ -172,4 +172,4 @@ php _tools/licences/compliance-checker.php
 
 ---
 
-*Auto-generated report - Last updated: 2026-08-18 08:28:46*
+*Auto-generated report - Last updated: 2026-09-11 19:49:53*
