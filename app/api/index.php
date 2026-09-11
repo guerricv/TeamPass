@@ -244,6 +244,9 @@ if (isset($uri[0]) && ($uri[0] === 'authorize' || $uri[0] === 'authorizeToken'))
         }
     }
 
+    // Pin the cache before any permission read or filtering that may write it.
+    $folderCacheBuild = beginUserFolderCacheBuild((int) ($userData['data']['id'] ?? 0));
+
     // Populate folders_list from cache_tree (was removed from JWT to reduce token size).
     // On cache miss or invalidation, rebuild from DB and refresh the cache.
     if (empty($userData['data']['folders_list'])) {
@@ -252,7 +255,7 @@ if (isset($uri[0]) && ($uri[0] === 'authorize' || $uri[0] === 'authorizeToken'))
             $cacheRow = DB::queryFirstRow(
                 'SELECT folders, IFNULL(invalidated_at, 0) AS invalidated_at, timestamp
                 FROM ' . prefixTable('cache_tree') . '
-                WHERE user_id = %i',
+                WHERE user_id = %i ORDER BY increment_id LIMIT 1',
                 $userId
             );
 
@@ -293,24 +296,7 @@ if (isset($uri[0]) && ($uri[0] === 'authorize' || $uri[0] === 'authorizeToken'))
                     $ret = $authModel->buildUserFoldersList($userRow);
                     $foldersJson = json_encode($ret['folders']);
 
-                    if ($cacheRow === null) {
-                        DB::insert(prefixTable('cache_tree'), [
-                            'user_id'         => $userId,
-                            'data'            => '[]',
-                            'visible_folders' => '[]',
-                            'folders'         => $foldersJson,
-                            'timestamp'       => time(),
-                            'invalidated_at'  => 0,
-                        ]);
-                    } else {
-                        DB::update(
-                            prefixTable('cache_tree'),
-                            ['folders' => $foldersJson, 'timestamp' => time(), 'invalidated_at' => 0],
-                            'user_id = %i',
-                            $userId
-                        );
-                    }
-
+                    cacheTreeUserHandler($userId, $foldersJson, $SETTINGS, 'folders', '', $folderCacheBuild);
                     if (!empty($ret['folders'])) {
                         $userData['data']['folders_list'] = implode(',', array_map('intval', $ret['folders']));
                     }
@@ -326,12 +312,7 @@ if (isset($uri[0]) && ($uri[0] === 'authorize' || $uri[0] === 'authorizeToken'))
         $filteredFolders = $folderAccessModel->filterFoldersForUser($currentFolders, $userId);
 
         if ($filteredFolders !== $currentFolders) {
-            DB::update(
-                prefixTable('cache_tree'),
-                ['folders' => json_encode($filteredFolders), 'timestamp' => time(), 'invalidated_at' => 0],
-                'user_id = %i',
-                $userId
-            );
+            cacheTreeUserHandler($userId, json_encode($filteredFolders), $SETTINGS, 'folders', '', $folderCacheBuild);
         }
 
         $userData['data']['folders_list'] = implode(',', $filteredFolders);

@@ -296,9 +296,11 @@ class AuthModel
         // Opportunistic cleanup: drop sessions expired for more than 24 hours
         DB::delete(prefixTable('api_sessions'), 'expires_at < %i', $issuedAt - 86400);
 
-        // get user folders list and persist in cache_tree
-        $ret = $this->buildUserFoldersList($userInfo);
-        $this->storeFoldersCache((int) $userInfo['id'], $ret['folders']);
+        // Capture invalidation before reading the permissions used by this cache build.
+        $folderCacheBuild = beginUserFolderCacheBuild((int) $userInfo['id']);
+        $folderUserInfo = getUserCompleteData($loginForJwt);
+        $ret = $folderUserInfo === null ? ['folders' => []] : $this->buildUserFoldersList($folderUserInfo);
+        $this->storeFoldersCache((int) $userInfo['id'], $ret['folders'], $folderCacheBuild);
 
         // Roles carried by the token: manual + AD/LDAP, exactly like the web session
         // (identify.php appends roles_from_ad_groups to fonction_id before storing
@@ -711,34 +713,13 @@ class AuthModel
      *
      * @param int   $userId
      * @param array $folders Array of integer folder IDs
+     * @param array{cache_id: int, started_at: int, invalidated_at: int} $build Cache identity captured before the rights read
      * @return void
      */
-    private function storeFoldersCache(int $userId, array $folders): void
+    private function storeFoldersCache(int $userId, array $folders, array $build): void
     {
-        $foldersJson = json_encode($folders);
-
-        $existing = DB::queryFirstRow(
-            'SELECT increment_id FROM ' . prefixTable('cache_tree') . ' WHERE user_id = %i',
-            $userId
-        );
-
-        if ($existing === null) {
-            DB::insert(prefixTable('cache_tree'), [
-                'user_id'         => $userId,
-                'data'            => '[]',
-                'visible_folders' => '[]',
-                'folders'         => $foldersJson,
-                'timestamp'       => time(),
-                'invalidated_at'  => 0,
-            ]);
-        } else {
-            DB::update(
-                prefixTable('cache_tree'),
-                ['folders' => $foldersJson, 'timestamp' => time(), 'invalidated_at' => 0],
-                'increment_id = %i',
-                (int) $existing['increment_id']
-            );
-        }
+        // Partial API writes share the web guard and never reset invalidated_at.
+        cacheTreeUserHandler($userId, json_encode($folders), [], 'folders', '', $build);
     }
     //end storeFoldersCache
 }

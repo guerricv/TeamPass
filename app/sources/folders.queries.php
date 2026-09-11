@@ -627,9 +627,6 @@ if (null !== $post_type) {
                 $dataFolder['id']
             );
 
-            // Invalidate cache for users with access to this folder
-            invalidateCacheForFolderUsers((int) $dataFolder['id']);
-
             // Add or update complexity row for this folder.
             // Personal root folders can exist without a misc/complex row,
             // so a plain UPDATE may silently affect 0 rows and leave the UI
@@ -670,6 +667,7 @@ if (null !== $post_type) {
             );
 
             $tree->rebuild();
+            invalidateCacheForFolderUsers((int) $dataFolder['id'], [(int) $session->get('user-id')]);
 
             // Emit WebSocket event for real-time notification
             emitFolderEvent(
@@ -833,7 +831,6 @@ if (null !== $post_type) {
                 'setFolderCategories' => false,
                 'manageFolderPermissions' => true,
                 'copyCustomFieldsCategories' => false,
-                'refreshCacheForUsersWithSimilarRoles' => true,
             ];
             $creationStatus = $folderManager->createNewFolder($params, $options);
 
@@ -1145,14 +1142,17 @@ if (null !== $post_type) {
 
             // Collect affected users BEFORE deleting folders/roles
             $folderForDel = array_unique($folderForDel);
-            $affectedUserIds = [];
+            $affectedUserIds = [(int) $session->get('user-id')];
             if (!empty($folderForDel)) {
-                $affectedUserIds = DB::queryFirstColumn(
+                $affectedUserIds = array_merge($affectedUserIds, DB::queryFirstColumn(
                     'SELECT DISTINCT ur.user_id FROM ' . prefixTable('users_roles') . ' ur
                     JOIN ' . prefixTable('roles_values') . ' rv ON ur.role_id = rv.role_id
                     WHERE rv.folder_id IN %ls',
                     $folderForDel
-                );
+                ), DB::queryFirstColumn(
+                    'SELECT user_id FROM ' . prefixTable('users_groups') . ' WHERE group_id IN %li',
+                    $folderForDel
+                ));
             }
 
             // delete folders
@@ -1160,14 +1160,12 @@ if (null !== $post_type) {
                 DB::delete(prefixTable('nested_tree'), 'id = %i', $fol);
             }
 
-            // Invalidate cache for affected users
-            invalidateCacheForFolderUsers(0, $affectedUserIds);
-
             // Commit transaction
             DB::commit();
 
             //rebuild tree
             $tree->rebuild();
+            invalidateCacheForFolderUsers(0, $affectedUserIds);
 
             // Emit WebSocket events for deleted folders
             foreach ($foldersDeletedInfo as $deletedFolder) {
@@ -1594,7 +1592,7 @@ if (null !== $post_type) {
             $tree->rebuild();
 
             // Invalidate cache for users with access to destination folder
-            invalidateCacheForFolderUsers((int) $post_target_folder_id);
+            invalidateCacheForFolderUsers((int) $post_target_folder_id, [(int) $session->get('user-id')]);
 
             $data = array(
                 'error' => '',
