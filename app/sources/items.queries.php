@@ -8720,6 +8720,12 @@ function getCurrentAccessRights(int $userId, int $itemId, int $treeId, string $a
         return getAccessResponse(false, false, false, false);
     }
 
+    // Administrators never access shared item content (show_details_item hides it
+    // too) and own no personal folder, so every folder left here is denied.
+    if ((int) $session->get('user-admin') === 1) {
+        return getAccessResponse(false, false, false, false);
+    }
+
     // All permission checks come FIRST so that the edition lock is never
     // created for a user who will ultimately be denied edit access.
 
@@ -8733,8 +8739,10 @@ function getCurrentAccessRights(int $userId, int $itemId, int $treeId, string $a
         return getAccessResponse(false, true, false, false);
     }
 
-    // Check if the folder is in the user's read-only list
-    if ((int) $session->get('user-read_only') === 1
+    // Read-only folders, and read-only accounts outside their own personal folders
+    // (the item handlers let a read-only account work in its personal folder)
+    if (((int) $session->get('user-read_only') === 1
+            && in_array($treeId, (array) $session->get('user-personal_folders')) === false)
         || in_array($treeId, (array) $session->get('user-read_only_folders'))
     ) {
         return getAccessResponse(false, true, false, false);

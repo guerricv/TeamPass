@@ -584,7 +584,10 @@ function refreshUserFolderPermissionScope(array $SETTINGS): bool
         $roles
     ));
     $session->set('user-personal_folder_enabled', (int) $userData['personal_folder']);
-    $session->set('user-read_only', (int) $userData['read_only']);
+    // Raw value, as identify.php stores it: a cast would activate the strict
+    // `=== 1` checks of the item/folder handlers and lock read-only accounts
+    // out of their own personal folder.
+    $session->set('user-read_only', $userData['read_only']);
     $session->set('user-can_create_root_folder', (int) $userData['can_create_root_folder']);
     $session->set('user-allowed_folders_by_definition', []);
     identifyUserRights(
