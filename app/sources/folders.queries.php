@@ -345,8 +345,8 @@ if (null !== $post_type) {
                 'title' => isset($dataReceived['title']) === true ? $dataReceived['title'] : '',
                 'parentId' => isset($dataReceived['parentId']) === true ? $dataReceived['parentId'] : 0,
                 'complexity' => isset($dataReceived['complexity']) === true ? $dataReceived['complexity'] : '',
-                'duration' => isset($dataReceived['renewalPeriod']) === true ? $dataReceived['renewalPeriod'] : 0,
-                // The Items page omits these fields; -1 preserves the stored options on update.
+                // The Items page omits these fields; -1 preserves the stored values on update.
+                'duration' => isset($dataReceived['renewalPeriod']) === true ? $dataReceived['renewalPeriod'] : -1,
                 'create_auth_without' => isset($dataReceived['addRestriction']) === true ? $dataReceived['addRestriction'] : -1,
                 'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? $dataReceived['editRestriction'] : -1,
                 'icon' => isset($dataReceived['icon']) === true ? $dataReceived['icon'] : '',
@@ -817,8 +817,8 @@ if (null !== $post_type) {
                 'complexity' => (int) $inputData['complexity'],
                 'duration' => (int) $inputData['duration'],
                 // Null lets FolderManager inherit the parent; an explicit 0 disables the option.
-                'create_auth_without' => isset($dataReceived['addRestriction']) ? (int) $inputData['create_auth_without'] : null,
-                'edit_auth_without' => isset($dataReceived['editRestriction']) ? (int) $inputData['edit_auth_without'] : null,
+                'create_auth_without' => isset($dataReceived['addRestriction']) === true ? (int) $inputData['create_auth_without'] : null,
+                'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? (int) $inputData['edit_auth_without'] : null,
                 'icon' => (string) $inputData['icon'],
                 'icon_selected' => (string) $inputData['icon_selected'],
                 'access_rights' => (string) $inputData['access_rights'],

@@ -195,22 +195,45 @@ class FolderSpecialOptionsTest extends TestCase
         }
     }
 
+    /** Execute the actual web update preparation and return the stored row after its SQL write. */
+    private function webUpdate(array $dataReceived, array $current): array
+    {
+        $source = sourceBetween(productionSource('app/sources/folders.queries.php'), "case 'update_folder':", "case 'add_folder':");
+        $variables = evaluateSource(sourceBetween($source, '$data = [', '// Init'), ['dataReceived' => $dataReceived]);
+        evaluateSource(sourceBetween($source, '// Prepare update parameters', '// Add or update complexity row'), $variables + ['isPersonal' => 0, 'dataFolder' => $current]);
+        self::assertCount(1, DB::$writes);
+        return array_replace($current, DB::$writes[0]['data']);
+    }
+
     /** Execute the actual web update preparation and capture its SQL write. */
     #[DataProvider('updateCases')]
     public function testWebRenameOrMovePreservesUnspecifiedOptions(int $create, int $edit, array $options): void
     {
-        $source = sourceBetween(productionSource('app/sources/folders.queries.php'), "case 'update_folder':", "case 'add_folder':");
-        $variables = evaluateSource(sourceBetween($source, '$data = [', '// Init'), [
-            'dataReceived' => ['id' => 7, 'title' => 'Renamed', 'parentId' => 9, 'complexity' => 60] + $options,
-        ]);
         $current = ['id' => 7, 'parent_id' => 1, 'renewal_period' => 0, 'bloquer_creation' => $create, 'bloquer_modification' => $edit];
-        evaluateSource(sourceBetween($source, '// Prepare update parameters', '// Invalidate cache'), $variables + ['isPersonal' => 0, 'dataFolder' => $current]);
-        self::assertCount(1, DB::$writes);
-        $stored = array_replace($current, DB::$writes[0]['data']);
+        $stored = $this->webUpdate(['id' => 7, 'title' => 'Renamed', 'parentId' => 9, 'complexity' => 60] + $options, $current);
         self::assertSame((int) ($options['addRestriction'] ?? $create), $stored['bloquer_creation']);
         self::assertSame((int) ($options['editRestriction'] ?? $edit), $stored['bloquer_modification']);
         self::assertSame('Renamed', $stored['title']);
         self::assertSame(9, $stored['parent_id']);
+    }
+
+    /** Omitted (Items page), explicit zero and explicit renewal periods. */
+    public static function renewalCases(): iterable
+    {
+        yield 'omitted' => [[], 30];
+        yield 'explicit zero' => [['renewalPeriod' => 0], 0];
+        yield 'explicit value' => [['renewalPeriod' => 90], 90];
+    }
+
+    /** The Items page omits the renewal period too; renaming a folder there must keep it. */
+    #[DataProvider('renewalCases')]
+    public function testWebRenameOrMovePreservesUnspecifiedRenewalPeriod(array $options, int $expected): void
+    {
+        $current = ['id' => 7, 'parent_id' => 1, 'renewal_period' => 30, 'bloquer_creation' => 1, 'bloquer_modification' => 1];
+        $stored = $this->webUpdate(['id' => 7, 'title' => 'Renamed', 'parentId' => 1, 'complexity' => 60] + $options, $current);
+        self::assertSame($expected, $stored['renewal_period']);
+        self::assertSame(1, $stored['bloquer_creation']);
+        self::assertSame(1, $stored['bloquer_modification']);
     }
 
     /** The legacy import path copies defaults only when inserting a new folder. */
