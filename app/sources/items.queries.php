@@ -46,6 +46,7 @@ require_once 'main.functions.php';
 require_once 'find.functions.php';
 require_once 'classification.functions.php';
 require_once 'lapr.functions.php';
+require_once __DIR__ . '/item_access_logic.php';
 
 // init
 loadClasses('DB');
@@ -8751,6 +8752,19 @@ function fileFormatImage($ext)
 function getCurrentAccessRights(int $userId, int $itemId, int $treeId, string $action = ''): array
 {
     $session = SessionManager::getSession();
+
+    // Only a folder of the user's resolved scope can authorize its items. The cached
+    // visible folders also list the blocked ancestors of accessible folders, so being
+    // in that list must never be enough on its own.
+    if (itemAccessFolderIsInScope(
+        $treeId,
+        (array) $session->get('user-accessible_folders'),
+        (array) $session->get('user-personal_folders'),
+        (array) $session->get('user-no_access_folders'),
+        (array) $session->get('user-forbiden_personal_folders')
+    ) === false) {
+        return getAccessResponse(false, false, false, false);
+    }
 
     // All permission checks come FIRST so that the edition lock is never
     // created for a user who will ultimately be denied edit access.
