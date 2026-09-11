@@ -35,6 +35,7 @@ require_once __DIR__ . '/../sources/runtime_files.functions.php';
 class TaskLogger {
     private $settings;
     private $logFile;
+    private static bool $destinationFailureReported = false;
 
     public function __construct(array $settings, string $logFile = '') {
         $this->settings = $settings;
@@ -53,12 +54,14 @@ class TaskLogger {
                                 " - [$level] $message" . PHP_EOL;
 
             if (!empty($this->logFile)) {
-                // Write to the specified log file, with the runtime file
-                // permission policy so the log does not stay world readable.
-                tpAppendRuntimeFile(
-                    tpResolveRuntimeLogPath($this->logFile, __DIR__),
-                    $formattedMessage
-                );
+                $path = tpResolveRuntimeLogPath($this->logFile, __DIR__);
+                if (tpAppendRuntimeFile($path, $formattedMessage) === false && self::$destinationFailureReported === false) {
+                    self::$destinationFailureReported = true;
+                    // Task arguments may be sensitive: report the failure, not the lost entry.
+                    error_log('Teampass: cannot append to the protected task log "' . $path
+                        . '"; check its path, owner and permissions. The log entry was not recorded.'
+                        . ' Further destination failures are suppressed for this process.');
+                }
             } else {
                 // Use default error log
                 error_log($formattedMessage);

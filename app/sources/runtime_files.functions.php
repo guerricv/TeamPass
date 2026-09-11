@@ -51,7 +51,7 @@ function tpRuntimeFileMatchesPath(string $path, array $streamStat): bool
 }
 
 /**
- * Open a trusted local runtime lock or signal without truncating its contents.
+ * Open a trusted local runtime file without truncating its contents.
  *
  * Try to restrict POSIX permissions before callers write: an inherited umask of 0022
  * otherwise produces 0644 files and triggers the Health permission warning.
@@ -60,9 +60,10 @@ function tpRuntimeFileMatchesPath(string $path, array $streamStat): bool
  * and signals. Permission auditing still reports the unresolved permissions.
  * Do not change the process-wide umask in a web request.
  *
+ * @param bool $requireRestrictedPermissions Refuse world access; the log caller reports failures.
  * @return resource|false The caller owns the stream and its advisory locking.
  */
-function tpOpenRuntimeFile(string $path)
+function tpOpenRuntimeFile(string $path, bool $requireRestrictedPermissions = false)
 {
     clearstatcache(true, $path);
     if (
@@ -91,7 +92,8 @@ function tpOpenRuntimeFile(string $path)
 
     $currentMode = $stat['mode'] & 07777;
     $restrictedMode = ($currentMode & 0640) | 0600;
-    if ($currentMode !== $restrictedMode && @chmod($path, $restrictedMode) === false) {
+    if ($currentMode !== $restrictedMode && @chmod($path, $restrictedMode) === false && !$requireRestrictedPermissions) {
+        // Logs report failures once in TaskLogger, not once per attempted entry.
         error_log(
             'Teampass: cannot restrict runtime file permissions for "' . $path
             . '". Continuing with existing access; check the file owner and permissions.'
@@ -102,6 +104,14 @@ function tpOpenRuntimeFile(string $path)
     if (tpRuntimeFileMatchesPath($path, $stat) === false) {
         fclose($handle);
         return false;
+    }
+
+    if ($requireRestrictedPermissions) {
+        $securedStat = @fstat($handle);
+        if ($securedStat === false || ($securedStat['mode'] & 0007) !== 0) {
+            fclose($handle);
+            return false;
+        }
     }
 
     return $handle;
@@ -159,28 +169,46 @@ function tpResolveRuntimeLogPath(string $logFile, string $baseDirectory): string
 }
 
 /**
- * Append to a trusted local runtime log using the same permissions as locks.
+ * Append a protected log entry without truncating history or leaking its contents.
  *
- * Wait for a competing writer, unlike the signal writer: every producer is a
- * background CLI process, never a web request, and a dropped log line would
- * hide exactly what the log is read for.
+ * Background CLI writers wait for each other. Reopen once if rotation replaced
+ * the path while waiting; never retry an entry after any bytes were written.
+ * A chmod-only failure is acceptable when no POSIX "other" access remains.
+ * Callers report failures without forwarding the potentially sensitive entry.
  */
 function tpAppendRuntimeFile(string $path, string $contents): bool
 {
-    $handle = tpOpenRuntimeFile($path);
-    if ($handle === false) {
-        return false;
-    }
-
-    try {
-        // Seek under the lock: the open position is the start of the file.
-        if (@flock($handle, LOCK_EX) === false || @fseek($handle, 0, SEEK_END) !== 0) {
+    for ($attempt = 0; $attempt < 2; ++$attempt) {
+        $handle = tpOpenRuntimeFile($path, true);
+        if ($handle === false) {
             return false;
         }
 
-        return @fwrite($handle, $contents) === strlen($contents) && @fflush($handle);
-    } finally {
-        // Closing releases the advisory lock on both success and failure.
-        fclose($handle);
+        try {
+            if (@flock($handle, LOCK_EX) === false) {
+                return false;
+            }
+            $stat = @fstat($handle);
+            if ($stat === false) {
+                return false;
+            }
+            if (tpRuntimeFileMatchesPath($path, $stat) === false) {
+                // finally closes the old descriptor before the bounded retry.
+                continue;
+            }
+            if (PHP_OS_FAMILY !== 'Windows' && ($stat['mode'] & 0007) !== 0) {
+                return false;
+            }
+            // Seek only after acquiring the lock and validating its destination.
+            if (@fseek($handle, 0, SEEK_END) !== 0) {
+                return false;
+            }
+
+            return @fwrite($handle, $contents) === strlen($contents) && @fflush($handle);
+        } finally {
+            fclose($handle);
+        }
     }
+
+    return false;
 }

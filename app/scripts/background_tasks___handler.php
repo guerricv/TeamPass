@@ -35,6 +35,7 @@ require_once __DIR__.'/../sources/main.functions.php';
 require_once __DIR__ . '/../sources/backup.functions.php';
 require_once __DIR__ . '/../sources/lapr.functions.php';
 require_once __DIR__ . '/taskLogger.php';
+require_once __DIR__ . '/backgroundTaskLock.php';
 
 class BackgroundTasksHandler {
     private array $settings;
@@ -43,7 +44,7 @@ class BackgroundTasksHandler {
     private int $maxExecutionTime;
     private int $batchSize;
     private int $maxTimeBeforeRemoval;
-    private mixed $lockFileHandle = null;
+    private ?BackgroundTaskLock $processLock = null;
     /** @var array<int, array{process: Process, task: array<string, mixed>, resourceKey: ?string}> Running process pool */
     private array $pool = [];
     private string $triggerFile;
@@ -951,70 +952,15 @@ class BackgroundTasksHandler {
     private function acquireProcessLock(): bool {
         $lockFile = !empty(TASKS_LOCK_FILE) ? TASKS_LOCK_FILE : (defined('TEAMPASS_STORAGE') ? TEAMPASS_STORAGE . '/logs/teampass_background_tasks.lock' : __DIR__ . '/../../storage/logs/teampass_background_tasks.lock');
 
-        // Opening (or creating) the lock file failing is NOT a concurrency
-        // situation but a filesystem/permission problem (typically the web
-        // server user cannot write to storage/logs). Surface it via error_log()
-        // because LOG_TASKS may be disabled and the task log itself lives in the
-        // same directory, so the failure would otherwise be completely silent.
-        $fp = tpOpenRuntimeFile($lockFile);
-        if ($fp === false) {
-            error_log(
-                'Teampass Background Tasks: cannot open a valid lock file "' . $lockFile
-                . '" - check that the web server user can write to this directory.'
-            );
-            return false;
-        }
-
-        if (!flock($fp, LOCK_EX | LOCK_NB)) {
-            // Another handler instance already holds the lock: expected, not an error.
-            fclose($fp);
-            return false;
-        }
-
-        // A finishing handler may have unlinked the lock between our open and
-        // our flock: we would then own an orphaned inode while the next handler
-        // creates a fresh file, locks it too and runs beside us. Detaching the
-        // path is the only way that happens, so compare the descriptor with it.
-        $lockStat = fstat($fp);
-        if ($lockStat === false || tpRuntimeFileMatchesPath($lockFile, $lockStat) === false) {
-            fclose($fp);
-            return false;
-        }
-
-        // Only the lock owner may replace the PID; a contending handler must
-        // not truncate the running handler's file while trying to acquire it.
-        $pid = (string) getmypid();
-        if (ftruncate($fp, 0) === false || fwrite($fp, $pid) !== strlen($pid) || fflush($fp) === false) {
-            fclose($fp);
-            error_log('Teampass Background Tasks: cannot write lock file "' . $lockFile . '".');
-            return false;
-        }
-        $this->lockFileHandle = $fp;
-        return true;
+        $this->processLock ??= new BackgroundTaskLock($lockFile);
+        return $this->processLock->acquire();
     }
 
     /**
      * Release the lock file.
      */
     private function releaseProcessLock(): void {
-        if ($this->lockFileHandle === null) {
-            // The lock was never acquired, so the file on disk belongs to
-            // another handler: removing it would let a third one run beside it.
-            return;
-        }
-
-        // Unlink while the lock is still held, and only when the path still
-        // names the very inode we own. A contender cannot then acquire what we
-        // are about to detach, which closes the other half of the same race.
-        $lockFile = !empty(TASKS_LOCK_FILE) ? TASKS_LOCK_FILE : (defined('TEAMPASS_STORAGE') ? TEAMPASS_STORAGE . '/logs/teampass_background_tasks.lock' : __DIR__ . '/../../storage/logs/teampass_background_tasks.lock');
-        $lockStat = fstat($this->lockFileHandle);
-        if ($lockStat !== false && tpRuntimeFileMatchesPath($lockFile, $lockStat)) {
-            unlink($lockFile);
-        }
-
-        flock($this->lockFileHandle, LOCK_UN);
-        fclose($this->lockFileHandle);
-        $this->lockFileHandle = null;
+        $this->processLock?->release();
     }
 
     /**

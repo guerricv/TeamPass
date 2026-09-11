@@ -4,155 +4,229 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../../app/sources/runtime_files.functions.php';
+require_once __DIR__ . '/../Fixtures/RuntimeProcessTestTrait.php';
+require_once __DIR__ . '/../../app/scripts/backgroundTaskLock.php';
 
-/**
- * The background handler serialises itself with an advisory lock on a file it
- * also deletes. Deleting a flocked file detaches the inode from the path, so
- * two handlers can end up holding two different inodes and run together.
- * These tests pin the two halves of the guard that closes that race.
- */
-class BackgroundTasksProcessLockTest extends TestCase
+final class BackgroundTasksProcessLockTest extends TestCase
 {
-    private string $root;
+    use RuntimeProcessTestTrait;
 
-    protected function setUp(): void
+    /** Observe real flock ownership at the unlink boundary, not source-text offsets. */
+    public function testReleaseUnlinksWhileItStillOwnsTheLock(): void
     {
-        $this->root = sys_get_temp_dir() . DIRECTORY_SEPARATOR
-            . 'teampass-process-lock-test-' . bin2hex(random_bytes(8));
-        self::assertTrue(mkdir($this->root, 0700, true));
-    }
-
-    protected function tearDown(): void
-    {
-        $root = realpath($this->root);
-        $temporaryRoot = realpath(sys_get_temp_dir());
-        if (
-            $root === false
-            || $temporaryRoot === false
-            || str_starts_with($root, $temporaryRoot . DIRECTORY_SEPARATOR . 'teampass-process-lock-test-') === false
-        ) {
-            return;
-        }
-
-        foreach ((array) glob($root . '/*') as $entry) {
-            if (is_string($entry)) {
-                unlink($entry);
-            }
-        }
-        rmdir($root);
-    }
-
-    private function handlerSource(): string
-    {
-        $source = file_get_contents(__DIR__ . '/../../app/scripts/background_tasks___handler.php');
-        self::assertIsString($source);
-
-        return $source;
-    }
-
-    /**
-     * Reproduce the race with the real primitives: an orphaned inode can still
-     * be locked, so lock ownership alone never proves exclusivity.
-     */
-    public function testAnOrphanedLockIsStillAcquirableAndMustBeRejectedByIdentity(): void
-    {
-        $path = $this->root . '/teampass_background_tasks.lock';
-
-        $running = tpOpenRuntimeFile($path);
-        self::assertIsResource($running);
-        self::assertTrue(flock($running, LOCK_EX | LOCK_NB));
-
-        // A second handler opens the very same inode before the first one exits.
-        $contender = tpOpenRuntimeFile($path);
-        self::assertIsResource($contender);
-        self::assertFalse(flock($contender, LOCK_EX | LOCK_NB), 'The lock must be exclusive while held.');
-
-        // The first handler finishes and detaches the inode from the path.
-        self::assertTrue(unlink($path));
-        self::assertTrue(flock($running, LOCK_UN));
-        fclose($running);
-
-        // The contender now acquires an inode no path names any more. This is
-        // the race: it believes it is the single handler.
-        self::assertTrue(flock($contender, LOCK_EX | LOCK_NB));
-        $contenderStat = fstat($contender);
-        self::assertIsArray($contenderStat);
-        self::assertFalse(
-            tpRuntimeFileMatchesPath($path, $contenderStat),
-            'The guard must reject a lock held on a detached inode.'
-        );
-
-        // A third handler legitimately creates and locks a fresh file, which is
-        // what would have made two handlers run side by side.
-        $next = tpOpenRuntimeFile($path);
-        self::assertIsResource($next);
-        self::assertTrue(flock($next, LOCK_EX | LOCK_NB));
-        $nextStat = fstat($next);
-        self::assertIsArray($nextStat);
-        self::assertTrue(tpRuntimeFileMatchesPath($path, $nextStat));
-
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/release-order.lock';
+        $probe = $this->runPhp(<<<'PHP'
+if (function_exists('unlink')) {
+    throw new RuntimeException('The unlink checkpoint was not enabled.');
+} else {
+    function unlink(string $path): bool {
+        $contender = fopen($path, 'c+b');
+        $acquired = flock($contender, LOCK_EX | LOCK_NB);
         fclose($contender);
-        fclose($next);
+        echo json_encode(['stillLocked' => !$acquired]);
+        return true;
+    }
+}
+require $argv[1];
+$lock = new BackgroundTaskLock($argv[2]);
+if (!$lock->acquire()) {
+    throw new RuntimeException('The owner must acquire the lock.');
+}
+$lock->release();
+PHP, [__DIR__ . '/../../app/scripts/backgroundTaskLock.php', $path], ['-d', 'disable_functions=unlink']);
+        self::assertSame(['stillLocked' => true], json_decode($probe->getOutput(), true));
+        self::assertSame('', $probe->getErrorOutput());
     }
 
-    /** An untouched lock keeps matching its path, so the guard costs no tick. */
-    public function testAHealthyLockPassesTheIdentityCheck(): void
+    /** The real acquisition rejects an orphan opened before the previous owner exited. */
+    public function testPreopenedContenderIsRejectedAfterLocking(): void
     {
-        $path = $this->root . '/teampass_background_tasks.lock';
-        $handle = tpOpenRuntimeFile($path);
-        self::assertIsResource($handle);
-        try {
-            self::assertTrue(flock($handle, LOCK_EX | LOCK_NB));
-            $stat = fstat($handle);
-            self::assertIsArray($stat);
-            self::assertTrue(tpRuntimeFileMatchesPath($path, $stat));
-            self::assertSame(5, fwrite($handle, '12345'));
-            self::assertTrue(fflush($handle));
-            self::assertTrue(tpRuntimeFileMatchesPath($path, $stat));
-        } finally {
-            fclose($handle);
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/teampass_background_tasks.lock';
+        [$first, $firstInput] = $this->startLockProbe($path);
+        $initial = $this->command($first, $firstInput, 'acquire');
+        self::assertTrue($initial['result']);
+        [$second, $secondInput] = $this->startLockProbe($path);
+        self::assertTrue($this->command($second, $secondInput, 'open')['result']);
+        self::assertFalse($this->command($second, $secondInput, 'lock_opened')['result']);
+        self::assertSame((string) $initial['pid'], $this->command($first, $firstInput, 'acquire')['contents']);
+        $this->command($first, $firstInput, 'release');
+        self::assertFileDoesNotExist($path);
+
+        // flock on the old inode succeeds, but the production identity check refuses it.
+        self::assertFalse($this->command($second, $secondInput, 'acquire_opened')['result']);
+        [$third, $thirdInput] = $this->startLockProbe($path);
+        $next = $this->command($third, $thirdInput, 'acquire');
+        self::assertTrue($next['result']);
+        self::assertSame((string) $next['pid'], $next['contents']);
+
+        $this->command($first, $firstInput, 'release');
+        $this->command($second, $secondInput, 'release');
+        self::assertFileExists($path);
+        self::assertFalse($this->command($first, $firstInput, 'acquire')['result']);
+        $this->command($third, $thirdInput, 'release');
+        self::assertFileDoesNotExist($path);
+    }
+
+    /** Exercise the same opened-descriptor path on a valid inode, not just the rejection. */
+    public function testPreopenedHealthyDescriptorCanBeAcquired(): void
+    {
+        $path = $this->root . '/storage/logs/healthy.lock';
+        [$probe, $input] = $this->startLockProbe($path);
+        self::assertTrue($this->command($probe, $input, 'open')['result']);
+        $acquired = $this->command($probe, $input, 'acquire_opened');
+        self::assertTrue($acquired['result']);
+        self::assertSame((string) $acquired['pid'], $acquired['contents']);
+        $this->command($probe, $input, 'release');
+        self::assertFileDoesNotExist($path);
+    }
+
+    /** Normal releases delete the file, preserve the active PID and admit the next handler. */
+    public function testNormalHandoffsRemoveTheFileAndKeepOneOwner(): void
+    {
+        $path = $this->root . '/storage/logs/teampass_background_tasks.lock';
+        [$first, $firstInput] = $this->startLockProbe($path);
+        [$second, $secondInput] = $this->startLockProbe($path);
+        for ($run = 0; $run < 3; ++$run) {
+            $initial = $this->command($first, $firstInput, 'acquire');
+            self::assertTrue($initial['result']);
+            self::assertFalse($this->command($second, $secondInput, 'acquire')['result']);
+            self::assertSame((string) $initial['pid'], $this->command($first, $firstInput, 'acquire')['contents']);
+            $this->command($first, $firstInput, 'release');
+            self::assertFileDoesNotExist($path);
+            $next = $this->command($second, $secondInput, 'acquire');
+            self::assertTrue($next['result']);
+            self::assertSame((string) $next['pid'], $next['contents']);
+            self::assertFalse($this->command($first, $firstInput, 'acquire')['result']);
+            $this->command($second, $secondInput, 'release');
+            self::assertFileDoesNotExist($path);
         }
     }
 
-    /** The acquiring handler must validate identity after taking the lock. */
-    public function testAcquireChecksDescriptorIdentityAfterLocking(): void
+    /** Releasing a detached owner must leave the replacement owner's path and PID alone. */
+    public function testReleaseDoesNotUnlinkAReplacementFile(): void
     {
-        $source = $this->handlerSource();
-
-        $lock = strpos($source, 'if (!flock($fp, LOCK_EX | LOCK_NB)) {');
-        $identity = strpos($source, 'tpRuntimeFileMatchesPath($lockFile, $lockStat) === false');
-        $write = strpos($source, '$pid = (string) getmypid();');
-
-        self::assertIsInt($lock);
-        self::assertIsInt($identity);
-        self::assertIsInt($write);
-        self::assertLessThan($identity, $lock, 'Identity must be checked after the lock is taken.');
-        self::assertLessThan($write, $identity, 'The PID must only be written on a validated lock.');
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/replaced.lock';
+        [$first, $firstInput] = $this->startLockProbe($path);
+        self::assertTrue($this->command($first, $firstInput, 'acquire')['result']);
+        self::assertTrue(rename($path, $path . '.old'));
+        [$second, $secondInput] = $this->startLockProbe($path);
+        $replacement = $this->command($second, $secondInput, 'acquire');
+        self::assertTrue($replacement['result']);
+        $this->command($first, $firstInput, 'release');
+        self::assertFileExists($path);
+        self::assertSame((string) $replacement['pid'], $this->command($second, $secondInput, 'acquire')['contents']);
+        self::assertFalse($this->command($first, $firstInput, 'acquire')['result']);
+        $this->command($second, $secondInput, 'release');
+        self::assertFileDoesNotExist($path);
     }
 
-    /**
-     * The releasing handler must unlink under its own lock, and never touch a
-     * lock file it does not own.
-     */
-    public function testReleaseUnlinksUnderTheLockAndOnlyWhenItOwnsIt(): void
+    /** Destruction follows normal release; a lock never acquired never deletes its target. */
+    public function testDestructionRemovesOnlyAnAcquiredLock(): void
     {
-        $source = $this->handlerSource();
-        $release = strpos($source, 'private function releaseProcessLock(): void {');
-        self::assertIsInt($release);
-        $body = substr($source, $release);
-
-        $guard = strpos($body, 'if ($this->lockFileHandle === null) {');
-        $ownership = strpos($body, 'tpRuntimeFileMatchesPath($lockFile, $lockStat)');
-        $unlink = strpos($body, 'unlink($lockFile);');
-        $unlock = strpos($body, 'flock($this->lockFileHandle, LOCK_UN);');
-
-        self::assertIsInt($guard);
-        self::assertIsInt($ownership);
-        self::assertIsInt($unlink);
-        self::assertIsInt($unlock);
-        self::assertLessThan($ownership, $guard, 'A handler that never acquired the lock must return early.');
-        self::assertLessThan($unlink, $ownership, 'Only the owned inode may be unlinked.');
-        self::assertLessThan($unlock, $unlink, 'Unlinking must happen while the lock is still held.');
+        $path = $this->root . '/storage/logs/destructor.lock';
+        $owner = new BackgroundTaskLock($path);
+        self::assertTrue($owner->acquire());
+        $idle = new BackgroundTaskLock($path);
+        unset($idle);
+        self::assertFileExists($path);
+        unset($owner);
+        self::assertFileDoesNotExist($path);
     }
+
+    /** A killed process leaves a reusable file when the next process has access. */
+    public function testAbruptExitAllowsRestartOnTheSameFile(): void
+    {
+        // A real POSIX SIGKILL must not run PHP destructors.
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/teampass_background_tasks.lock';
+        [$first, $firstInput] = $this->startLockProbe($path);
+        $acquired = $this->command($first, $firstInput, 'acquire');
+        self::assertTrue($acquired['result']);
+        $first->signal(9);
+        $first->wait();
+        self::assertFalse($first->isRunning());
+        self::assertTrue($first->hasBeenSignaled());
+        self::assertSame(9, $first->getTermSignal());
+        self::assertFileExists($path);
+        self::assertSame((string) $acquired['pid'], file_get_contents($path));
+        [$next, $nextInput] = $this->startLockProbe($path);
+        $restarted = $this->command($next, $nextInput, 'acquire');
+        self::assertTrue($restarted['result']);
+        self::assertSame($acquired['inode'], $restarted['inode']);
+        self::assertSame((string) $restarted['pid'], $restarted['contents']);
+    }
+
+    /** Coordination locks still tolerate chmod denial after successful opening. */
+    public function testLockRetainsBestEffortPermissionPolicy(): void
+    {
+        $this->requirePosix();
+        $path = $this->root . '/storage/logs/teampass_background_tasks.lock';
+        self::assertSame(5, file_put_contents($path, '12345'));
+        self::assertTrue(chmod($path, 0664));
+        clearstatcache(true, $path);
+        $probe = $this->runPhp(<<<'PHP'
+if (function_exists('chmod')) {
+    throw new RuntimeException('The chmod denial fixture was not enabled.');
+} else {
+    function chmod(string $path, int $mode): bool { return false; }
+}
+require $argv[1];
+$lock = new BackgroundTaskLock($argv[2]);
+$acquired = $lock->acquire();
+$mode = fileperms($argv[2]) & 0777;
+$pid = file_get_contents($argv[2]);
+$lock->release();
+echo json_encode(['acquired' => $acquired, 'mode' => $mode, 'pid' => $pid, 'expectedPid' => getmypid()]);
+PHP, [__DIR__ . '/../../app/scripts/backgroundTaskLock.php', $path], ['-d', 'disable_functions=chmod']);
+        $result = json_decode($probe->getOutput(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertTrue($result['acquired']);
+        self::assertSame((string) $result['expectedPid'], $result['pid']);
+        self::assertSame(0664, $result['mode']);
+        self::assertFileDoesNotExist($path);
+        self::assertStringContainsString('Continuing with existing access', $probe->getErrorOutput());
+    }
+
+    /** Opening failures remain explicit and never remove a configured directory. */
+    public function testInvalidLockTargetsAreReportedWithoutDeletion(): void
+    {
+        foreach ([$this->root . '/missing/lock', $this->root . '/storage/logs'] as $path) {
+            $probe = $this->runPhp(
+                'require $argv[1]; $lock = new BackgroundTaskLock($argv[2]);'
+                . ' echo json_encode($lock->acquire()); $lock->release();',
+                [__DIR__ . '/../../app/scripts/backgroundTaskLock.php', $path]
+            );
+            self::assertSame('false', $probe->getOutput());
+            self::assertStringContainsString('cannot open a valid lock file', $probe->getErrorOutput());
+        }
+        self::assertDirectoryExists($this->root . '/storage/logs');
+        self::assertDirectoryDoesNotExist($this->root . '/missing');
+    }
+
+    /** Losing or releasing an unacquired lock must not disturb its target. */
+    public function testFailedAndRepeatedAcquisitionDoesNotLoseOwnership(): void
+    {
+        $path = $this->root . '/storage/logs/teampass_background_tasks.lock';
+        $owner = new BackgroundTaskLock($path);
+        $contender = new BackgroundTaskLock($path);
+        self::assertTrue($owner->acquire());
+        try {
+            self::assertTrue($owner->acquire());
+            self::assertFalse($contender->acquire());
+            $contender->release();
+            unset($contender);
+            self::assertFileExists($path);
+            $other = new BackgroundTaskLock($path);
+            self::assertFalse($other->acquire());
+            $owner->release();
+            self::assertTrue($other->acquire());
+            $other->release();
+            self::assertFileDoesNotExist($path);
+        } finally {
+            $owner->release();
+        }
+    }
+
 }
