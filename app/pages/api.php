@@ -88,6 +88,12 @@ $browserFqdn = getDomainFromSettingsUrl($SETTINGS['cpassman_url'] ?? '');
 // extension already configured with it.
 $browserExtensionKey = (string) ($SETTINGS['browser_extension_key'] ?? '');
 
+// Licence identity, shown read-only in the Licence tab. A trial is granted once per FQDN and
+// per product, forever, so an unusable FQDN is reported before anything can be requested.
+require_once __DIR__ . '/../sources/licence_trial_logic.php';
+$browserExtensionFqdn = licenceTrialNormalizeFqdn((string) ($SETTINGS['browser_extension_fqdn'] ?? ''));
+$browserExtensionFqdnIsValid = licenceTrialIsValidFqdn($browserExtensionFqdn);
+
 /**
  * Extract the domain name (host) from the application URL setting.
  * * @param string $url The URL string to parse, typically from $SETTINGS['passman_url'].
@@ -228,6 +234,9 @@ function getDomainFromSettingsUrl(string $url): string
                             <li class="nav-item">
                                 <a class="nav-link" data-toggle="tab" href="#extension" role="tab" aria-controls="extension"><?php echo $lang->get('browser_extension'); ?></a>
                             </li>
+                            <li class="nav-item">
+                                <a class="nav-link" data-toggle="tab" href="#licence" role="tab" aria-controls="licence"><?php echo $lang->get('licence_management'); ?></a>
+                            </li>
                         </ul>
 
                         <div class="tab-content">
@@ -358,6 +367,35 @@ function getDomainFromSettingsUrl(string $url): string
                                     </div>
                                 </div>
 
+                            </div>
+
+                            <div class="tab-pane fade" id="licence" role="tabpanel" aria-labelledby="licence-tab">
+                                <div class='row mt-4 mb-2'>
+                                    <div class='col-5'>
+                                        <?php echo $lang->get('browser_extension_fqdn'); ?>
+                                    </div>
+                                    <div class='col-7'>
+                                        <span class="font-weight-bold" id="licence-identity-fqdn"><?php echo htmlspecialchars($browserExtensionFqdn, ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <i class="fa-solid fa-circle-check text-success ml-1<?php echo $browserExtensionFqdnIsValid === true ? '' : ' hidden'; ?>"></i>
+                                        <i class="fa-solid fa-triangle-exclamation text-danger ml-1<?php echo $browserExtensionFqdnIsValid === true ? ' hidden' : ''; ?>"></i>
+                                    </div>
+                                </div>
+
+                                <div class='row mt-2 mb-3'>
+                                    <div class='col-5'>
+                                        <?php echo $lang->get('browser_extension_key'); ?>
+                                    </div>
+                                    <div class='col-7'>
+                                        <span class="text-monospace" id="licence-identity-key"><?php echo $browserExtensionKey === '' ? '&mdash;' : htmlspecialchars(substr($browserExtensionKey, 0, 6), ENT_QUOTES, 'UTF-8') . str_repeat('&bull;', 10); ?></span>
+<?php if ($browserExtensionKey !== '') { ?>
+                                        <button class="btn btn-sm btn-default ml-2" id="copy-licence-key" data-key="<?php echo htmlspecialchars($browserExtensionKey, ENT_QUOTES, 'UTF-8'); ?>"><i class="fa-regular fa-copy pointer"></i></button>
+<?php } ?>
+                                    </div>
+                                </div>
+
+                                <div id="licence-panel">
+                                    <i class="fas fa-circle-notch fa-spin mr-2"></i><?php echo $lang->get('please_wait'); ?>
+                                </div>
                             </div>
                         </div>
 

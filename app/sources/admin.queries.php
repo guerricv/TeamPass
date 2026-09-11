@@ -42,6 +42,7 @@ use TeampassClasses\EmailService\EmailService;
 
 // Load functions
 require_once 'main.functions.php';
+require_once __DIR__ . '/licence.functions.php';
 $session = SessionManager::getSession();
 $request = SymfonyRequest::createFromGlobals();
 loadClasses('DB');
@@ -3407,135 +3408,372 @@ case 'get_system_health':
 
 case 'get_extension_licence_info':
     /**
-     * Check browser extension licence server status and consumption.
-     * Called asynchronously from the admin dashboard after page load.
+     * Licence state for the admin dashboard widget.
+     *
+     * Kept for backward compatibility: the response keys the widget has always read are
+     * unchanged, and the trial keys are additive. The transport, the caching and the
+     * signature verification now live in licence.functions.php, so this handler and the
+     * Licence tab share a single network path and a single rate budget.
      *
      * @return array {
-     *   error: bool,
-     *   server_online: bool,
-     *   server_version: string,
-     *   licence_status: string,     -- 'VALID'|'EXPIRED'|'INVALID'|''
-     *   consumed: int,
-     *   max_users: int
+     *   error: bool, server_online: bool, server_version: string,
+     *   licence_status: string, expiration_date: string, consumed: int, max_users: int,
+     *   trial: bool, days_left: int|null, trial_expiring_soon: bool
      * }
      */
-    $licenceKey  = $SETTINGS['browser_extension_key'] ?? '';
-    $licenceFqdn = $SETTINGS['browser_extension_fqdn'] ?? '';
+    if ($post_key !== $session->get('key')) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('key_is_not_correct')],
+            'encode'
+        );
+        break;
+    }
 
-    if (empty($licenceKey)) {
+    $licenceInfo = licenceFetchInfo($SETTINGS);
+
+    if ($licenceInfo['no_licence_key'] === true) {
         echo prepareExchangedData(['error' => true, 'message' => 'no_licence_key'], 'encode');
         break;
     }
 
-    // Cache TTL: 60 min when server was online last time, 10 min when it was offline
-    $cacheRaw = $SETTINGS['extension_licence_cache'] ?? '';
-    $cacheAt  = (int) ($SETTINGS['extension_licence_cache_at'] ?? 0);
-    $cached   = $cacheRaw !== '' ? json_decode($cacheRaw, true) : null;
-    $ttl      = ($cached !== null && ($cached['server_online'] ?? false)) ? 3600 : 600;
+    $licenceExtension = $licenceInfo['info']['extension'];
+    $licenceDaysLeft = licenceTrialDaysLeft((string) $licenceExtension['expiration_date'], time());
 
-    if ($cached !== null && (time() - $cacheAt) < $ttl) {
-        // Serve from cache — no network call
-        echo prepareExchangedData($cached, 'encode');
+    echo prepareExchangedData(
+        [
+            'error' => false,
+            'server_online' => (bool) $licenceInfo['server_online'],
+            'server_version' => (string) $licenceInfo['server_version'],
+            'licence_status' => (string) $licenceExtension['status'],
+            'expiration_date' => (string) $licenceExtension['expiration_date'],
+            'consumed' => (int) $licenceExtension['consumed'],
+            'max_users' => (int) $licenceExtension['max_users'],
+            'trial' => (bool) $licenceExtension['trial'],
+            'days_left' => $licenceDaysLeft,
+            'trial_expiring_soon' => (bool) $licenceExtension['trial']
+                && $licenceDaysLeft !== null
+                && $licenceDaysLeft <= LICENCE_TRIAL_EXPIRY_WARNING_DAYS,
+        ],
+        'encode'
+    );
+    break;
+
+// ========================================
+// LICENCE TAB - SELF-SERVICE TRIAL
+// ========================================
+
+case 'get_licence_panel':
+    /**
+     * Everything the Licence tab renders, in one object.
+     *
+     * Performs a network call only when a cache is stale and the hourly budget allows it.
+     *
+     * @return array The view model, or an error envelope.
+     */
+    if ($post_key !== $session->get('key') || (int) $session->get('user-admin') !== 1) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
         break;
     }
 
-    // Helper: perform a cURL request with strict connection + read timeouts
-    $curlGet = static function (string $url, int $connectTimeout = 2, int $totalTimeout = 4): string|false {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => $connectTimeout,
-            CURLOPT_TIMEOUT        => $totalTimeout,
-            CURLOPT_FAILONERROR    => true,
-        ]);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    };
+    echo prepareExchangedData(
+        [
+            'error' => false,
+            'panel' => licenceBuildPanelViewModel(
+                $SETTINGS,
+                (string) $session->get('user-email')
+            ),
+        ],
+        'encode'
+    );
+    break;
 
-    $curlPost = static function (string $url, string $jsonBody, int $connectTimeout = 2, int $totalTimeout = 5): string|false {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => $connectTimeout,
-            CURLOPT_TIMEOUT        => $totalTimeout,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $jsonBody,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Content-Length: ' . strlen($jsonBody)],
-            CURLOPT_FAILONERROR    => true,
-        ]);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    };
-
-    // 1. Check licence server availability
-    $serverOnline  = false;
-    $serverVersion = '';
-    $serverRaw = $curlGet('https://licence.teampass.net');
-    if ($serverRaw !== false) {
-        $serverData = json_decode($serverRaw, true);
-        $serverOnline  = ($serverData['status'] ?? '') === 'online';
-        $serverVersion = $serverData['version'] ?? '';
-    }
-//error_log('DEBUG: Licence server online: ' . ($serverOnline ? 'yes' : 'no') . ', version: ' . $serverVersion);
-    if (!$serverOnline) {
-        $result = [
-            'error'           => false,
-            'server_online'   => false,
-            'server_version'  => '',
-            'licence_status'  => '',
-            'expiration_date' => '',
-            'consumed'        => 0,
-            'max_users'       => 0,
-        ];
-        // Cache the offline result for 10 min to avoid repeated network attempts
-        DB::query(
-            'INSERT INTO ' . prefixTable('misc') . ' (type, intitule, valeur) VALUES (%s, %s, %s)
-             ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)',
-            'admin', 'extension_licence_cache', (string) json_encode($result)
+case 'refresh_licence_status':
+    /**
+     * Forced refresh of the licence fact sheet, behind the shared hourly budget.
+     *
+     * This is what the "I have confirmed - check" button calls. When the budget is spent no
+     * request is made at all: the answer carries retry_after so the interface can say when
+     * checking again is possible instead of burning the quota the confirmation flow needs.
+     *
+     * @return array The refreshed view model.
+     */
+    if ($post_key !== $session->get('key') || (int) $session->get('user-admin') !== 1) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
         );
-        DB::query(
-            'INSERT INTO ' . prefixTable('misc') . ' (type, intitule, valeur) VALUES (%s, %s, %s)
-             ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)',
-            'admin', 'extension_licence_cache_at', (string) time()
-        );
-        echo prepareExchangedData($result, 'encode');
         break;
     }
 
-    // 2. Retrieve licence consumption info
-    $postData = (string) json_encode([
-        'instance_fqdn' => $licenceFqdn,
-        'license_token' => $licenceKey,
-    ]);
-    //error_log('DEBUG: Sending licence info request to https://licence.teampass.net/api/v1.2/info.php with payload: ' . $postData);
-    $infoRaw     = $curlPost('https://licence.teampass.net/api/v1.2/info.php', $postData);
-    $licenceInfo = ($infoRaw !== false) ? json_decode($infoRaw, true) : null;
-
-    $result = [
-        'error'           => false,
-        'server_online'   => true,
-        'server_version'  => $serverVersion,
-        'licence_status'  => $licenceInfo['status'] ?? '',
-        'expiration_date' => $licenceInfo['expiration_date'] ?? '',
-        'consumed'        => (int) ($licenceInfo['consumed_this_month'] ?? 0),
-        'max_users'       => (int) ($licenceInfo['max_users'] ?? 0),
-    ];
-
-    // Cache the successful result for 60 min
-    DB::query(
-        'INSERT INTO ' . prefixTable('misc') . ' (type, intitule, valeur) VALUES (%s, %s, %s)
-         ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)',
-        'admin', 'extension_licence_cache', (string) json_encode($result)
+    echo prepareExchangedData(
+        [
+            'error' => false,
+            'panel' => licenceBuildPanelViewModel(
+                $SETTINGS,
+                (string) $session->get('user-email'),
+                true
+            ),
+        ],
+        'encode'
     );
-    DB::query(
-        'INSERT INTO ' . prefixTable('misc') . ' (type, intitule, valeur) VALUES (%s, %s, %s)
-         ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)',
-        'admin', 'extension_licence_cache_at', (string) time()
+    break;
+
+case 'request_licence_trial':
+    /**
+     * Ask the licence server for a 30-day trial, or resend the confirmation message.
+     *
+     * A trial is granted once per (FQDN, product) and the registry survives the deletion of
+     * the licence, so everything that can be checked locally is checked before the request
+     * leaves: an unusable FQDN would spend the only trial this instance will ever get.
+     *
+     * @return array {error, message, panel}
+     */
+    if ($post_key !== $session->get('key') || (int) $session->get('user-admin') !== 1) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
+        break;
+    }
+
+    $trialInput = $post_data !== '' && $post_data !== null
+        ? prepareExchangedData($post_data, 'decode')
+        : [];
+    if (is_array($trialInput) === false) {
+        $trialInput = [];
+    }
+
+    $trialProduct = (string) ($trialInput['product'] ?? LICENCE_TRIAL_DEFAULT_PRODUCT);
+    $trialEmail = trim((string) ($trialInput['contact_email'] ?? ''));
+    $trialFqdn = licenceTrialNormalizeFqdn((string) ($SETTINGS['browser_extension_fqdn'] ?? ''));
+    $trialToken = (string) ($SETTINGS['browser_extension_key'] ?? '');
+
+    if (in_array($trialProduct, LICENCE_TRIAL_PRODUCTS, true) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
+        break;
+    }
+
+    if (licenceTrialIsValidFqdn($trialFqdn) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_fqdn')],
+            'encode'
+        );
+        break;
+    }
+
+    if (licenceTrialIsValidToken($trialToken) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_token')],
+            'encode'
+        );
+        break;
+    }
+
+    if (filter_var($trialEmail, FILTER_VALIDATE_EMAIL) === false || strlen($trialEmail) > 255) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_email')],
+            'encode'
+        );
+        break;
+    }
+
+    // Trials may be closed on the licence server; the route to call is what discovery says.
+    $trialDiscovery = licenceDiscover($SETTINGS);
+    if ($trialDiscovery['server_online'] === true && $trialDiscovery['trial_available'] === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_disabled')],
+            'encode'
+        );
+        break;
+    }
+
+    $trialResult = licenceRequestTrial(
+        $SETTINGS,
+        $trialProduct,
+        $trialEmail,
+        $trialDiscovery['trial_url'] !== '' ? $trialDiscovery['trial_url'] : LICENCE_TRIAL_DEFAULT_PATH
     );
 
-    echo prepareExchangedData($result, 'encode');
+    licenceWriteTrialState(
+        licenceTrialNextState(
+            licenceReadTrialState($SETTINGS),
+            $trialProduct,
+            $trialResult,
+            time(),
+            $trialFqdn,
+            $trialEmail
+        )
+    );
+
+    // The audit trail records that a trial was asked for and for which product. The licence
+    // key is a secret and is never written to the logs.
+    logEvents(
+        $SETTINGS,
+        'admin_action',
+        $trialResult['outcome'] === LICENCE_OUTCOME_GRANTED
+            ? 'at_licence_trial_activated'
+            : 'at_licence_trial_requested',
+        (string) $session->get('user-id'),
+        (string) $session->get('user-login'),
+        $trialProduct . ' / ' . $trialResult['status']
+    );
+
+    // Settings were rewritten by the state save; re-read them so the panel reflects the
+    // request that just happened rather than the state it had on entry.
+    $SETTINGS = (new ConfigManager())->getAllSettings();
+
+    echo prepareExchangedData(
+        [
+            'error' => in_array(
+                $trialResult['outcome'],
+                [LICENCE_OUTCOME_GRANTED, LICENCE_OUTCOME_PENDING],
+                true
+            ) === false,
+            'outcome' => $trialResult['outcome'],
+            'status' => $trialResult['status'],
+            'message' => $lang->get($trialResult['message_key']),
+            'errors' => $trialResult['errors'],
+            'retry_after' => $trialResult['retry_after'],
+            'panel' => licenceBuildPanelViewModel(
+                $SETTINGS,
+                (string) $session->get('user-email'),
+                $trialResult['outcome'] === LICENCE_OUTCOME_GRANTED,
+                $trialProduct
+            ),
+        ],
+        'encode'
+    );
+    break;
+
+case 'send_licence_trial_link':
+    /**
+     * E-mail the offline trial request link to the administrator.
+     *
+     * For an instance with no outbound Internet access. trial.php is POST-only JSON, so a
+     * link cannot call it: the link opens a page ON the licence server, which performs the
+     * POST behind a captcha once the administrator confirms. Nothing is requested here — this
+     * only carries the link out of an isolated machine, using the SMTP relay such a server
+     * almost always still has.
+     *
+     * @return array {error, message, panel}
+     */
+    if ($post_key !== $session->get('key') || (int) $session->get('user-admin') !== 1) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
+        break;
+    }
+
+    $offlineInput = $post_data !== '' && $post_data !== null
+        ? prepareExchangedData($post_data, 'decode')
+        : [];
+    if (is_array($offlineInput) === false) {
+        $offlineInput = [];
+    }
+
+    $offlineProduct = (string) ($offlineInput['product'] ?? LICENCE_TRIAL_DEFAULT_PRODUCT);
+    $offlineEmail = trim((string) ($offlineInput['contact_email'] ?? ''));
+    $offlineRecipient = trim((string) ($offlineInput['send_to'] ?? ''));
+    $offlineFqdn = licenceTrialNormalizeFqdn((string) ($SETTINGS['browser_extension_fqdn'] ?? ''));
+    $offlineToken = (string) ($SETTINGS['browser_extension_key'] ?? '');
+
+    if ($offlineRecipient === '') {
+        $offlineRecipient = $offlineEmail;
+    }
+
+    if (in_array($offlineProduct, LICENCE_TRIAL_PRODUCTS, true) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('error_not_allowed_to')],
+            'encode'
+        );
+        break;
+    }
+
+    // The same guards as a live request. The link ends up on the licence server, so an FQDN
+    // that would spend the one and only trial on a garbage name must not be put in it.
+    if (licenceTrialIsValidFqdn($offlineFqdn) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_fqdn')],
+            'encode'
+        );
+        break;
+    }
+
+    if (licenceTrialIsValidToken($offlineToken) === false) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_token')],
+            'encode'
+        );
+        break;
+    }
+
+    if (filter_var($offlineEmail, FILTER_VALIDATE_EMAIL) === false || strlen($offlineEmail) > 255
+        || filter_var($offlineRecipient, FILTER_VALIDATE_EMAIL) === false || strlen($offlineRecipient) > 255
+    ) {
+        echo prepareExchangedData(
+            ['error' => true, 'message' => $lang->get('licence_trial_error_email')],
+            'encode'
+        );
+        break;
+    }
+
+    $offlineUrl = licenceTrialOfflineRequestUrl(
+        $SETTINGS,
+        $offlineFqdn,
+        $offlineEmail,
+        $offlineToken,
+        $offlineProduct
+    );
+
+    // sendMailToUser() strips newlines from the body, so the layout is made of <br> tags.
+    sendMailToUser(
+        $offlineRecipient,
+        $lang->get('licence_trial_offline_email_body'),
+        $lang->get('licence_trial_offline_email_subject'),
+        [
+            '#tp_fqdn#' => $offlineFqdn,
+            '#tp_contact_email#' => $offlineEmail,
+            '#tp_trial_link#' => $offlineUrl,
+        ],
+        false
+    );
+
+    licenceMarkOfflineLinkSent($SETTINGS, $offlineProduct, $offlineRecipient, time());
+
+    // The audit trail records that the link left the instance and where it went. The licence
+    // key travels in the link and is never written to the logs.
+    logEvents(
+        $SETTINGS,
+        'admin_action',
+        'at_licence_trial_link_sent',
+        (string) $session->get('user-id'),
+        (string) $session->get('user-login'),
+        $offlineProduct . ' / ' . $offlineRecipient
+    );
+
+    // The state was just rewritten; re-read so the panel shows the trace.
+    $SETTINGS = (new ConfigManager())->getAllSettings();
+
+    echo prepareExchangedData(
+        [
+            'error' => false,
+            'message' => $lang->get('licence_trial_offline_email_sent'),
+            'panel' => licenceBuildPanelViewModel(
+                $SETTINGS,
+                (string) $session->get('user-email'),
+                false,
+                $offlineProduct
+            ),
+        ],
+        'encode'
+    );
     break;
 
 // ========================================

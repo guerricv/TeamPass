@@ -827,16 +827,30 @@ function loadExtensionLicenceInfo() {
                 html += '<br><span class="badge badge-' + badgeClass + ' mr-1">'
                     + $('<span>').text(data.licence_status).html()
                     + '</span>'
-                    + '<i class="fas fa-users mr-1"></i>'
+
+                // A trial is not a subscription: it stops on the day it expires, with no
+                // 15-day tolerance, so it must be told apart at a glance.
+                if (data.trial === true) {
+                    html += '<span class="badge badge-info mr-1">'
+                        + '<?php echo $lang->get('licence_trial_badge'); ?></span>'
+                }
+
+                html += '<i class="fas fa-users mr-1"></i>'
                     + data.consumed + ' / ' + data.max_users + ' <?php echo $lang->get('users'); ?>'
 
                 // Expiration date
                 if (data.expiration_date) {
-                    html += '<br><span>'
+                    const expiryClass = data.trial_expiring_soon === true ? ' class="text-warning"' : ''
+                    html += '<br><span' + expiryClass + '>'
                         + '<i class="fas fa-calendar-alt mr-1"></i>'
                         + '<?php echo $lang->get('valid_until'); ?>: <strong>'
                         + $('<span>').text(data.expiration_date).html()
-                        + '</strong></span>'
+                        + '</strong>'
+                    if (data.trial_expiring_soon === true && data.days_left !== null) {
+                        html += ' (' + $('<span>').text(data.days_left).html()
+                            + ' <?php echo $lang->get('days'); ?>)'
+                    }
+                    html += '</span>'
                 }
             }
 
