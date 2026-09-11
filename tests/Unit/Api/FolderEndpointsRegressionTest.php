@@ -61,7 +61,6 @@ class FolderEndpointsRegressionTest extends TestCase
         foreach ([
             "'rebuildFolderTree' => true",
             "'manageFolderPermissions' => true",
-            "'refreshCacheForUsersWithSimilarRoles' => true",
         ] as $needle) {
             self::assertStringContainsString(
                 $needle,
@@ -651,17 +650,16 @@ class FolderEndpointsRegressionTest extends TestCase
             'createFolder, updateFolder and deleteFolders must each be transactional'
         );
 
-        // refreshCacheForUsersWithSimilarRoles opens its OWN transaction: MySQL commits
-        // implicitly on a nested BEGIN, so it must run strictly after the commit.
+        // Creation invalidates affected users directly after its transaction/tree build.
         $createBody = $this->extractMethodBody($manager, 'private function createFolder');
         $commitPos = strpos($createBody, 'DB::commit();');
-        $refreshPos = strpos($createBody, 'refreshCacheForUsersWithSimilarRoles(');
+        $refreshPos = strpos($createBody, 'invalidateCacheForFolderUsers(');
         self::assertIsInt($commitPos);
         self::assertIsInt($refreshPos);
         self::assertLessThan(
             $refreshPos,
             $commitPos,
-            'the cache refresh must not run inside the create transaction (nested BEGIN)'
+            'cache invalidation must run after the create transaction commits'
         );
 
         // Same for the tree rebuild, which locks the whole nested_tree table
@@ -672,6 +670,8 @@ class FolderEndpointsRegressionTest extends TestCase
             $commitPos,
             'the tree rebuild must run after the commit'
         );
+        self::assertLessThan($refreshPos, $rebuildPos, 'cache invalidation must follow the tree rebuild');
+        self::assertStringNotContainsString('refreshCacheForUsersWithSimilarRoles(', $createBody);
 
         self::assertStringContainsString(
             "return ['error' => true, 'newId' => null, 'db_error' => true];",

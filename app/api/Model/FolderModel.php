@@ -377,7 +377,6 @@ class FolderModel
             'setFolderCategories' => false,
             'manageFolderPermissions' => true,
             'copyCustomFieldsCategories' => false,
-            'refreshCacheForUsersWithSimilarRoles' => true,
         ];
         $creationStatus = $folderManager->createNewFolder($params, $options);
 

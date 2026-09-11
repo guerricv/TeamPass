@@ -7479,57 +7479,11 @@ switch ($inputData['type']) {
                 break;
             }
         }
-        // Refresh role-based folder access from database
-        // Ensures real-time visibility when admin changes role permissions
-        // Use subqueries for aggregations (MySQL ONLY_FULL_GROUP_BY compatibility)
-        $userData = DB::queryFirstRow(
-            'SELECT u.admin,
-            agg_groups.groupes_visibles,
-            agg_gforbid.groupes_interdits,
-            agg_roles.fonction_id,
-            agg_roles.roles_from_ad_groups
-            FROM ' . prefixTable('users') . ' AS u
-            LEFT JOIN (
-                SELECT user_id, GROUP_CONCAT(group_id ORDER BY group_id SEPARATOR ";") AS groupes_visibles
-                FROM ' . prefixTable('users_groups') . '
-                GROUP BY user_id
-            ) agg_groups ON agg_groups.user_id = u.id
-            LEFT JOIN (
-                SELECT user_id, GROUP_CONCAT(group_id ORDER BY group_id SEPARATOR ";") AS groupes_interdits
-                FROM ' . prefixTable('users_groups_forbidden') . '
-                GROUP BY user_id
-            ) agg_gforbid ON agg_gforbid.user_id = u.id
-            LEFT JOIN (
-                SELECT user_id,
-                    GROUP_CONCAT(DISTINCT CASE WHEN source = "manual" THEN role_id END ORDER BY role_id SEPARATOR ";") AS fonction_id,
-                    GROUP_CONCAT(DISTINCT CASE WHEN source = "ad" THEN role_id END ORDER BY role_id SEPARATOR ";") AS roles_from_ad_groups
-                FROM ' . prefixTable('users_roles') . '
-                GROUP BY user_id
-            ) agg_roles ON agg_roles.user_id = u.id
-            WHERE u.id = %s',
-            $session->get('user-id')
-        );
-
-        if (empty($userData) === false) {
-            identifyUserRights(
-                $userData['groupes_interdits'] ?? [],
-                $userData['admin'],
-                is_null($userData['roles_from_ad_groups']) === true
-                    ? strval($userData['fonction_id'])
-                    : (empty($userData['roles_from_ad_groups']) === true
-                        ? strval($userData['fonction_id'])
-                        : strval($userData['fonction_id']) . ';' . strval($userData['roles_from_ad_groups'])),
-                $SETTINGS
-            );
-
-            // Handle root folder creation right
-            if (
-                $session->has('user-can_create_root_folder')
-                && null !== $session->get('user-can_create_root_folder')
-                && (int) $session->get('user-can_create_root_folder') === 1
-            ) {
-                SessionManager::addRemoveFromSessionArray('user-accessible_folders', [0], 'add');
-            }
+        // Capture invalidations before refreshing rights or reading folder rows.
+        $folderCacheBuild = beginUserFolderCacheBuild((int) $session->get('user-id'));
+        if (refreshUserFolderPermissionScope($SETTINGS) === false) {
+            echo prepareExchangedData(['error' => true, 'message' => $lang->get('error_not_allowed_to_access_this_folder')], 'encode');
+            break;
         }
 
         // Recompute after role refresh (session may have changed)
@@ -7620,6 +7574,8 @@ switch ($inputData['type']) {
                 json_encode($arr_data['folders']),
                 $SETTINGS,
                 'visible_folders',
+                '',
+                $folderCacheBuild
             );
         }
 
@@ -8752,6 +8708,18 @@ function getCurrentAccessRights(int $userId, int $itemId, int $treeId, string $a
 {
     $session = SessionManager::getSession();
 
+    $configManager = new ConfigManager();
+    if ($userId !== (int) $session->get('user-id')
+        || refreshUserFolderPermissionScope($configManager->getAllSettings()) === false
+        || !in_array($treeId, folderCacheVisibleScope(
+            (array) $session->get('user-accessible_folders'),
+            (array) $session->get('user-no_access_folders'),
+            (array) $session->get('user-forbiden_personal_folders')
+        ), true)
+    ) {
+        return getAccessResponse(false, false, false, false);
+    }
+
     // All permission checks come FIRST so that the edition lock is never
     // created for a user who will ultimately be denied edit access.
 
@@ -8766,7 +8734,9 @@ function getCurrentAccessRights(int $userId, int $itemId, int $treeId, string $a
     }
 
     // Check if the folder is in the user's read-only list
-    if (in_array($treeId, $session->get('user-read_only_folders'))) {
+    if ((int) $session->get('user-read_only') === 1
+        || in_array($treeId, (array) $session->get('user-read_only_folders'))
+    ) {
         return getAccessResponse(false, true, false, false);
     }
 
@@ -9141,7 +9111,7 @@ function getUserVisibleFolders(int $userId): array
     // Query to retrieve visible folders for the user, including invalidation state
     $data = DB::queryFirstRow(
         'SELECT visible_folders, timestamp, IFNULL(invalidated_at, 0) AS invalidated_at
-        FROM ' . prefixTable('cache_tree') . ' WHERE user_id = %i',
+        FROM ' . prefixTable('cache_tree') . ' WHERE user_id = %i ORDER BY increment_id LIMIT 1',
         $userId
     );
 
@@ -9161,52 +9131,39 @@ function getUserVisibleFolders(int $userId): array
 }
 
 /**
- * Build the current user's visible folders while the cache is unavailable.
- * Uses the permission scope already resolved by core.php for this request.
+ * Build fallback metadata from rights refreshed from the database once per request.
  *
- * @param int $userId User ID
- * @return array Array of visible folders with metadata
+ * @param int $userId Current session user ID
+ * @return array Visible folders with effective personal/read-only metadata
  */
 function buildVisibleFoldersOnTheFly(int $userId): array
 {
-    $html = [];
     $session = SessionManager::getSession();
-    if ($userId !== (int) $session->get('user-id')) {
-        return $html;
+    $configManager = new ConfigManager();
+    if ($userId !== (int) $session->get('user-id')
+        || refreshUserFolderPermissionScope($configManager->getAllSettings()) === false
+    ) {
+        return [];
     }
-
-    // core.php has already resolved roles, direct grants, denials and personal
-    // descendants for this request. Reuse that scope while the cache is empty.
-    $visibleFolderIds = array_values(array_diff(
-        array_unique(array_map('intval', (array) $session->get('user-accessible_folders'))),
-        array_map('intval', (array) $session->get('user-no_access_folders')),
-        array_map('intval', (array) $session->get('user-forbiden_personal_folders'))
-    ));
-    $personalFolderIds = array_flip(array_map('intval', (array) $session->get('user-personal_folders')));
-    $readOnlyFolderIds = array_flip(array_map('intval', (array) $session->get('user-read_only_folders')));
-
-    // Build the visible folders array with metadata
-    foreach ($visibleFolderIds as $folderId) {
-        $folderInfo = DB::queryFirstRow(
-            'SELECT title, parent_id, personal_folder FROM ' . prefixTable('nested_tree') . ' WHERE id = %i',
-            $folderId
-        );
-
-        if ($folderInfo) {
-            $html[] = [
-                "id" => $folderId,
-                "level" => 0, // Simplified - exact level not critical for access check
-                "title" => $folderInfo['title'],
-                "disabled" => isset($readOnlyFolderIds[$folderId]) ? 1 : 0,
-                "parent_id" => $folderInfo['parent_id'],
-                "perso" => isset($personalFolderIds[$folderId]) ? 1 : 0,
-                "path" => "",
-                "is_visible_active" => isset($readOnlyFolderIds[$folderId]) ? 1 : 0,
-            ];
-        }
+    // Use the freshly resolved scope, including direct grants, denials and personal descendants.
+    $visibleFolderIds = folderCacheVisibleScope(
+        (array) $session->get('user-accessible_folders'),
+        (array) $session->get('user-no_access_folders'),
+        (array) $session->get('user-forbiden_personal_folders')
+    );
+    if ($visibleFolderIds === []) {
+        return [];
     }
-
-    return $html;
+    $rows = DB::query(
+        'SELECT id, title, parent_id FROM ' . prefixTable('nested_tree') . ' WHERE id IN %li',
+        $visibleFolderIds
+    );
+    return folderCacheVisibleRows(
+        $rows,
+        $visibleFolderIds,
+        (array) $session->get('user-personal_folders'),
+        (array) $session->get('user-read_only_folders')
+    );
 }
 
 /**

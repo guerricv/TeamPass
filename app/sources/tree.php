@@ -80,6 +80,40 @@ header('Cache-Control: no-cache, no-store, must-revalidate');
 // Load tree
 $tree = new NestedTree(prefixTable('nested_tree'), 'id', 'parent_id', 'title');
 
+$lastFolderChange = DB::queryFirstRow(
+    'SELECT valeur FROM ' . prefixTable('misc') . '
+    WHERE type = %s AND intitule = %s',
+    'timestamp',
+    'last_folder_change'
+);
+if (DB::count() === 0) {
+    $lastFolderChange['valeur'] = 0;
+}
+/** @var int|string $lastFolderChangeValeur */
+$lastFolderChangeValeur = $lastFolderChange['valeur'] ?? 0;
+
+// Drop legacy heavy session entries if they exist; cache_tree is the server-side source.
+foreach (['user-tree_structure', 'user-cache_tree'] as $legacyTreeSessionKey) {
+    if ($session->has($legacyTreeSessionKey) === true) {
+        $session->remove($legacyTreeSessionKey);
+    }
+}
+
+// Should we use a cache or refresh the tree
+$goTreeRefresh = loadTreeStrategy(
+    (int) $lastFolderChangeValeur,
+    (int) $session->get('user-id'),
+    (int) $request->query->get('force_refresh', 0)
+);
+$folderCacheBuild = null;
+if ($goTreeRefresh['state'] === true || !empty($request->query->get('id'))) {
+    $folderCacheBuild = beginUserFolderCacheBuild((int) $session->get('user-id'));
+    if (refreshUserFolderPermissionScope($SETTINGS) === false) {
+        echo json_encode(['error' => true]);
+        exit;
+    }
+}
+
 // Prepare sanitization
 $data = [
     'forbidenPfs' => null !== $session->get('user-forbiden_personal_folders') ? json_encode($session->get('user-forbiden_personal_folders')) : '{}',
@@ -122,31 +156,6 @@ $inputData = dataSanitizer(
     $filters
 );
 
-$lastFolderChange = DB::queryFirstRow(
-    'SELECT valeur FROM ' . prefixTable('misc') . '
-    WHERE type = %s AND intitule = %s',
-    'timestamp',
-    'last_folder_change'
-);
-if (DB::count() === 0) {
-    $lastFolderChange['valeur'] = 0;
-}
-/** @var int|string $lastFolderChangeValeur */
-$lastFolderChangeValeur = $lastFolderChange['valeur'] ?? 0;
-
-// Drop legacy heavy session entries if they exist; cache_tree is the server-side source.
-foreach (['user-tree_structure', 'user-cache_tree'] as $legacyTreeSessionKey) {
-    if ($session->has($legacyTreeSessionKey) === true) {
-        $session->remove($legacyTreeSessionKey);
-    }
-}
-
-// Should we use a cache or refresh the tree
-$goTreeRefresh = loadTreeStrategy(
-    (int) $lastFolderChangeValeur,
-    (int) $inputData['userId'],
-    (int) $inputData['forceRefresh']
-);
 // We don't use the cache if an ID of folder is provided
 if ($goTreeRefresh['state'] === true || empty($inputData['nodeId']) === false) {
     // Build tree
@@ -194,7 +203,7 @@ if ($goTreeRefresh['state'] === true || empty($inputData['nodeId']) === false) {
     }
 
     // Keep only lightweight tree metadata in SESSION.
-    $treeBuiltAt = time();
+    $treeBuiltAt = $folderCacheBuild['started_at'];
     $session->set('user-tree_last_refresh_timestamp', $treeBuiltAt);
 
     // Build visible_folders synchronously from the same tree data
@@ -209,7 +218,8 @@ if ($goTreeRefresh['state'] === true || empty($inputData['nodeId']) === false) {
         $ret_json,
         $SETTINGS,
         '',
-        $visibleFoldersJson
+        $visibleFoldersJson,
+        $folderCacheBuild
     );
 
     // Send back with version for client-side caching
@@ -839,7 +849,7 @@ function loadTreeStrategy(
     $userCacheTree = DB::queryFirstRow(
         'SELECT data, timestamp, IFNULL(invalidated_at, 0) as invalidated_at
         FROM ' . prefixTable('cache_tree') . '
-        WHERE user_id = %i',
+        WHERE user_id = %i ORDER BY increment_id LIMIT 1',
         $userId
     );
     if (empty($userCacheTree['data']) === false && $userCacheTree['data'] !== '[]') {

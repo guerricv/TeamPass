@@ -1228,7 +1228,7 @@ function performPostLoginTasks(
         'SELECT increment_id, timestamp, IFNULL(invalidated_at, 0) AS invalidated_at,
             COALESCE(CHAR_LENGTH(visible_folders), 0) AS visible_folders_size
         FROM ' . prefixTable('cache_tree') . '
-        WHERE user_id=%i',
+        WHERE user_id=%i ORDER BY increment_id LIMIT 1',
         (int) $session->get('user-id')
     );
 
@@ -1241,26 +1241,6 @@ function performPostLoginTasks(
         'invalidated_at' => (int) ($cacheTreeData['invalidated_at'] ?? 0),
         'visible_folders_size' => (int) ($cacheTreeData['visible_folders_size'] ?? 0),
     ]);
-
-    if (empty($cacheTreeData) === true || (int) ($cacheTreeData['visible_folders_size'] ?? 0) === 0) {
-        // Prepare new task
-        DB::insert(
-            prefixTable('background_tasks'),
-            array(
-                'created_at' => time(),
-                'process_type' => 'user_build_cache_tree',
-                'arguments' => json_encode([
-                    'user_id' => (int) $session->get('user-id'),
-                ], JSON_HEX_QUOT | JSON_HEX_TAG),
-                'updated_at' => null,
-                'finished_at' => null,
-                'output' => null,
-            )
-        );
-
-        // Trigger background handler to process tasks
-        triggerBackgroundHandler();
-    }
 
     // Send email notification if enabled
     $lang = new Language($session->get('user-language') ?? 'english');

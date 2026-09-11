@@ -56,6 +56,7 @@ require_once __DIR__ . '/security_posture_logic.php';
 require_once __DIR__ . '/operational_statistics_logic.php';
 require_once __DIR__ . '/log_display_logic.php';
 require_once __DIR__ . '/item_revisions_logic.php';
+require_once __DIR__ . '/folder_cache_logic.php';
 require_once __DIR__ . '/password_strength.functions.php';
 require_once __DIR__ . '/roles_scope.functions.php';
 require_once __DIR__ . '/file_integrity.functions.php';
@@ -524,6 +525,78 @@ function identifyUserRights(
     );
 
     return true;
+}
+
+/**
+ * Refresh the current web user's folder and role scope once per request.
+ *
+ * AJAX handlers do not load core.php. Refresh before authorization shortcuts as
+ * well as before uncached dropdown/tree builds, so revoked grants cannot survive
+ * in session arrays. A missing/disabled account must not reuse its previous scope.
+ *
+ * @param array $SETTINGS Application settings
+ * @return bool Whether a current, active account was found
+ */
+function refreshUserFolderPermissionScope(array $SETTINGS): bool
+{
+    static $refreshed = null;
+    if ($refreshed !== null) {
+        return $refreshed;
+    }
+    $session = SessionManager::getSession();
+    $userData = DB::queryFirstRow(
+        'SELECT u.admin, u.disabled, u.personal_folder, u.read_only, u.can_create_root_folder,
+        agg_gforbid.groupes_interdits, agg_roles.fonction_id, agg_roles.roles_from_ad_groups
+        FROM ' . prefixTable('users') . ' AS u
+        LEFT JOIN (
+            SELECT user_id, GROUP_CONCAT(group_id ORDER BY group_id SEPARATOR ";") AS groupes_interdits
+            FROM ' . prefixTable('users_groups_forbidden') . '
+            GROUP BY user_id
+        ) agg_gforbid ON agg_gforbid.user_id = u.id
+        LEFT JOIN (
+            SELECT user_id,
+                GROUP_CONCAT(DISTINCT CASE WHEN source = "manual" THEN role_id END ORDER BY role_id SEPARATOR ";") AS fonction_id,
+                GROUP_CONCAT(DISTINCT CASE WHEN source = "ad" THEN role_id END ORDER BY role_id SEPARATOR ";") AS roles_from_ad_groups
+            FROM ' . prefixTable('users_roles') . '
+            GROUP BY user_id
+        ) agg_roles ON agg_roles.user_id = u.id
+        WHERE u.id = %i',
+        (int) $session->get('user-id')
+    );
+    if (empty($userData) || (int) $userData['disabled'] === 1) {
+        foreach (['user-accessible_folders', 'user-personal_folders', 'user-read_only_folders',
+            'user-allowed_folders_by_definition', 'user-roles_array', 'system-array_roles'] as $key) {
+            $session->set($key, []);
+        }
+        $session->set('user-roles', '');
+        return $refreshed = false;
+    }
+    $roles = folderCacheNormalizeIds(array_merge(
+        explode(';', (string) ($userData['fonction_id'] ?? '')),
+        explode(';', (string) ($userData['roles_from_ad_groups'] ?? ''))
+    ));
+    $session->set('user-roles', implode(';', $roles));
+    // Keep the string IDs used by identify.php and strict role-scope consumers.
+    $session->set('user-roles_array', array_map('strval', $roles));
+    // Both item restrictions and getRoleBasedAccess() must see the current roles.
+    $session->set('system-array_roles', $roles === [] ? [] : DB::query(
+        'SELECT id, title FROM ' . prefixTable('roles_title') . ' WHERE id IN %li',
+        $roles
+    ));
+    $session->set('user-personal_folder_enabled', (int) $userData['personal_folder']);
+    $session->set('user-read_only', (int) $userData['read_only']);
+    $session->set('user-can_create_root_folder', (int) $userData['can_create_root_folder']);
+    $session->set('user-allowed_folders_by_definition', []);
+    identifyUserRights(
+        $userData['groupes_interdits'] ?? [],
+        $userData['admin'],
+        implode(';', $roles),
+        $SETTINGS
+    );
+    if ((int) $session->get('user-can_create_root_folder') === 1) {
+        SessionManager::addRemoveFromSessionArray('user-accessible_folders', [0], 'add');
+    }
+    return $refreshed = true;
 }
 
 /**
@@ -8037,64 +8110,62 @@ function secureOutput(mixed $data, array $fields = []): mixed
  * @param string $data
  * @param array $SETTINGS
  * @param string $field_update
- * @return void
+ * @param string $visible_folders Dropdown JSON built with the tree
+ * @param array{cache_id: int, started_at: int, invalidated_at: int}|null $build Identity captured before the build
+ * @return bool Whether a row was changed (false also for an identical write)
  */
-function cacheTreeUserHandler(int $user_id, string $data, array $SETTINGS, string $field_update = '', string $visible_folders = '')
+function cacheTreeUserHandler(int $user_id, string $data, array $SETTINGS, string $field_update = '', string $visible_folders = '', ?array $build = null): bool
 {
-    // Load class DB
-    loadClasses('DB');
-
-    // Exists ?
-    $userCacheId = DB::queryFirstRow(
-        'SELECT increment_id
-        FROM ' . prefixTable('cache_tree') . '
-        WHERE user_id = %i',
-        $user_id
-    );
-
-    if (is_null($userCacheId) === true || count($userCacheId) === 0) {
-        // A dropdown-only refresh must not be stored as jstree data on a cache miss.
-        $insertData = array(
-            'data' => empty($field_update) ? $data : '[]',
-            'timestamp' => empty($field_update) ? time() : 0,
-            'user_id' => $user_id,
-            'visible_folders' => $visible_folders,
-            'invalidated_at' => 0,
-        );
-        if (!empty($field_update)) {
-            $insertData[$field_update] = $data;
-        }
-        DB::insert(
-            prefixTable('cache_tree'),
-            $insertData
-        );
-    } elseif (!empty($field_update)) {
-        // Update only a specific field (e.g. 'visible_folders' from items.queries.php)
-        DB::update(
-            prefixTable('cache_tree'),
-            [
-                $field_update => $data,
-            ],
-            'increment_id = %i',
-            $userCacheId['increment_id']
-        );
-    } else {
-        // Update data (and visible_folders if provided)
-        $updateFields = [
-            'timestamp' => time(),
-            'data' => $data,
-            'invalidated_at' => 0,
-        ];
-        if (!empty($visible_folders)) {
-            $updateFields['visible_folders'] = $visible_folders;
-        }
-        DB::update(
-            prefixTable('cache_tree'),
-            $updateFields,
-            'increment_id = %i',
-            $userCacheId['increment_id']
-        );
+    // Never recreate a row deleted during the build, or stamp data with write time.
+    if ($build === null || $user_id <= 0 || $build['cache_id'] <= 0) {
+        return false;
     }
+    loadClasses('DB');
+    DB::update(
+        prefixTable('cache_tree'),
+        folderCacheWriteFields($data, $field_update, $visible_folders, $build['started_at']),
+        'user_id = %i AND increment_id = %i AND IFNULL(invalidated_at, 0) < %i
+        AND IFNULL(invalidated_at, 0) = %i AND CAST(timestamp AS UNSIGNED) <= %i',
+        $user_id,
+        $build['cache_id'],
+        $build['started_at'],
+        $build['invalidated_at'],
+        $build['started_at']
+    );
+    return DB::affectedRows() > 0;
+}
+
+/**
+ * Capture a cache row before reading the permissions/data used by a build.
+ *
+ * Empty rows make concurrent invalidation observable even on a first load.
+ * Pinning the row ID makes a deletion during the build reject the later write.
+ * Pinning its invalidation marker also detects an invalidation committed during
+ * the build, even if that transaction assigned its timestamp before we started.
+ * The legacy schema permits duplicate user rows: consistently select the first.
+ * No transaction is held while building the tree.
+ *
+ * @param int $userId Cache owner (no web session required)
+ * @return array{cache_id: int, started_at: int, invalidated_at: int} Build identity and start time
+ */
+function beginUserFolderCacheBuild(int $userId): array
+{
+    loadClasses('DB');
+    if ($userId <= 0) {
+        return ['cache_id' => 0, 'started_at' => time(), 'invalidated_at' => 0];
+    }
+    $query = 'SELECT increment_id, IFNULL(invalidated_at, 0) AS invalidated_at FROM ' . prefixTable('cache_tree') . '
+        WHERE user_id = %i ORDER BY increment_id LIMIT 1';
+    $row = DB::queryFirstRow($query, $userId);
+    if (empty($row)) {
+        DB::insert(prefixTable('cache_tree'), folderCacheEmptyRow($userId));
+        $row = DB::queryFirstRow($query, $userId);
+    }
+    return [
+        'cache_id' => (int) ($row['increment_id'] ?? 0),
+        'started_at' => time(),
+        'invalidated_at' => (int) ($row['invalidated_at'] ?? 0),
+    ];
 }
 
 /**
@@ -8110,10 +8181,7 @@ function cacheTreeUserHandler(int $user_id, string $data, array $SETTINGS, strin
  */
 function invalidateUserFolderCache(array $userIds): void
 {
-    $userIds = array_values(array_unique(array_filter(
-        array_map('intval', $userIds),
-        static fn (int $userId): bool => $userId > 0
-    )));
+    $userIds = folderCacheNormalizeIds($userIds);
     if (empty($userIds)) {
         return;
     }
@@ -8301,7 +8369,7 @@ function loadFoldersListByCache(
     $userCacheTree = DB::queryFirstRow(
         'SELECT '.$fieldName.', timestamp, IFNULL(invalidated_at, 0) as invalidated_at
         FROM ' . prefixTable('cache_tree') . '
-        WHERE user_id = %i',
+        WHERE user_id = %i ORDER BY increment_id LIMIT 1',
         $session->get('user-id')
     );
     if (empty($userCacheTree[$fieldName]) === false && $userCacheTree[$fieldName] !== '[]') {

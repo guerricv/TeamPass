@@ -194,7 +194,7 @@ class FolderManager
         $tree->rebuild();
 
         // Invalidate cache for users with access to this folder
-        invalidateCacheForFolderUsers($folderId);
+        invalidateCacheForFolderUsers($folderId, [(int) ($params['user_id'] ?? 0)]);
         if (!empty($params['parent_changed'])) {
             $this->refreshCacheForUsersWithSimilarRoles((string) ($params['user_roles'] ?? ''));
         }
@@ -346,21 +346,22 @@ class FolderManager
 
             // Collect affected users BEFORE deleting folders/roles
             $folderForDel = array_values(array_unique($folderForDel));
-            $affectedUserIds = [];
+            $affectedUserIds = [$userId];
             if (empty($folderForDel) === false) {
-                $affectedUserIds = DB::queryFirstColumn(
+                $affectedUserIds = array_merge($affectedUserIds, DB::queryFirstColumn(
                     'SELECT DISTINCT ur.user_id FROM ' . prefixTable('users_roles') . ' ur
                     JOIN ' . prefixTable('roles_values') . ' rv ON ur.role_id = rv.role_id
                     WHERE rv.folder_id IN %ls',
                     $folderForDel
-                );
+                ), DB::queryFirstColumn(
+                    'SELECT user_id FROM ' . prefixTable('users_groups') . ' WHERE group_id IN %li',
+                    $folderForDel
+                ));
             }
 
             foreach ($folderForDel as $fol) {
                 DB::delete(prefixTable('nested_tree'), 'id = %i', $fol);
             }
-
-            invalidateCacheForFolderUsers(0, $affectedUserIds);
 
             DB::commit();
         } catch (Throwable $e) {
@@ -370,6 +371,7 @@ class FolderManager
 
         // Rebuild the tree after commit (mirrors the web handler)
         $tree->rebuild();
+        invalidateCacheForFolderUsers(0, $affectedUserIds);
 
         // Emit WebSocket events for deleted folders
         foreach ($foldersDeletedInfo as $deletedFolder) {
@@ -568,17 +570,13 @@ class FolderManager
                 return ['error' => true, 'newId' => null, 'db_error' => true];
             }
 
-            // Post-commit: heavy / non-transactional work (tree rebuild locks the whole
-            // nested_tree table, cache refresh queues background tasks in its own
-            // transaction — neither may run inside the transaction above).
+            // Rebuild after the business transaction, then invalidate affected users.
+            // NestedTree::rebuild() locks the table and must not run before commit.
             if (isset($options['rebuildFolderTree']) && $options['rebuildFolderTree'] === true) {
                 $this->rebuildFolderTree($isPersonal, $newId);
             }
             // Include the creator even when no role covers the folder (personal folders).
             invalidateCacheForFolderUsers((int) $newId, [(int) $user_id]);
-            if (isset($options['refreshCacheForUsersWithSimilarRoles']) && $options['refreshCacheForUsersWithSimilarRoles'] === true) {
-                $this->refreshCacheForUsersWithSimilarRoles($user_roles);
-            }
 
             return ['error' => false, 'newId' => $newId];
         } else {
