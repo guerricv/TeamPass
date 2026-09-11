@@ -1,10 +1,18 @@
-# Login submission tests
+# JavaScript regression tests
 
 Run from the repository root with Node.js 22 or newer; no npm dependencies are needed:
 
 ```sh
-node --test tests/JavaScript/login-submission.test.cjs
+node --test tests/JavaScript/*.test.cjs
 ```
+
+`folder-special-options.test.cjs` executes the folder creation form's parent-change
+handler and submission mapping. It covers all parent option combinations, changing
+parents, returning to root, and explicit overrides of inherited defaults. Before
+release, check the same flows in the browser and verify that the newly inserted
+folder row and its edit sidebar display the values actually saved by the server.
+
+## Login submission
 
 The suite executes the login template's JavaScript functions and event handlers.
 Form controls, HTTP responses, navigation and timers are simulated so failures and

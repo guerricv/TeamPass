@@ -1204,8 +1204,8 @@ curl -s -X GET "https://your-teampass.com/api/index.php/folder/writableFolders" 
 | `complexity` | integer | ✅¹ | Complexity level: 0 (Weak), 20 (Medium), 38 (Strong), 48 (Heavy), 60 (Very heavy) |
 | `private` | boolean | ❌ | Create a personal (private) folder under your personal root. When `true`, `parent_id` and `complexity` become optional. Personal folders must be enabled for your account. |
 | `duration` | integer | ❌ | Expiration delay in minutes (0 = no expiration) |
-| `create_auth_without` | integer | ❌ | Allow creation even if complexity insufficient (0/1) |
-| `edit_auth_without` | integer | ❌ | Allow update even if complexity insufficient (0/1) |
+| `create_auth_without` | integer | ❌ | Allow item creation below the folder's minimum password strength (0/1). Omitted: inherit the parent's value, or 0 at root. Explicit 0 disables the exception. |
+| `edit_auth_without` | integer | ❌ | Allow item editing below the folder's minimum password strength (0/1). Omitted: inherit the parent's value, or 0 at root. Explicit 0 disables the exception. |
 | `icon` | string | ❌ | FontAwesome icon code (closed state) |
 | `icon_selected` | string | ❌ | FontAwesome icon code (open/selected state) |
 | `access_rights` | string | ❌ | Access type granted to your roles on the new folder: R (Read), W (Write), ND (No deletion), NE (No edit), NDNE (No deletion and No edit). **Defaults to `W`** when omitted. |
@@ -1313,8 +1313,8 @@ Partial update: only `id` is required; any field you omit keeps its current valu
 | `parent_id` | integer | ❌ | New parent ID (move). Cross-domain personal ↔ shared moves are rejected. |
 | `complexity` | integer | ❌ | New complexity level. Must be one of 0, 20, 38, 48, 60 — any other value is rejected with `422`. |
 | `duration` | integer | ❌ | Expiration delay in minutes |
-| `create_auth_without` | integer | ❌ | Allow creation even if complexity insufficient (0/1) |
-| `edit_auth_without` | integer | ❌ | Allow update even if complexity insufficient (0/1) |
+| `create_auth_without` | integer | ❌ | Allow item creation below the folder's minimum password strength (0/1). Omitted: preserve the current value. |
+| `edit_auth_without` | integer | ❌ | Allow item editing below the folder's minimum password strength (0/1). Omitted: preserve the current value. |
 | `icon` | string | ❌ | FontAwesome icon code (closed state) |
 | `icon_selected` | string | ❌ | FontAwesome icon code (open/selected state) |
 

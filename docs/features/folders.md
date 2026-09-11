@@ -45,6 +45,17 @@ Click **New** in the toolbar to open the creation form.
 | **Create without complexity** | No | When checked, users can add items without meeting the minimum complexity. Use with care |
 | **Edit without complexity** | No | When checked, users can modify existing items without meeting the minimum complexity |
 
+The two **Special** options apply to items in this folder. They do not allow a new
+subfolder to have a lower minimum password strength than its parent.
+
+New subfolders inherit the parent's two option values as defaults, including when
+created from the Items page, through the API, or during an import. The creation form
+prefills these defaults when selecting a parent; either option can be changed before
+saving or afterward. Root folders default to both options disabled. This is a one-time
+copy: later changes to the parent do not change existing subfolders, and moving an
+existing folder preserves its options. This behavior is independent of the
+`subfolder_rights_as_parent` setting for role permissions.
+
 > 💡 Icons use the same FontAwesome classes as item icons. See [Items — adding an icon](items.md#adding-icon-to-item-or-folder).
 
 ### Password complexity levels

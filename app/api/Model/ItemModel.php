@@ -530,7 +530,7 @@ class ItemModel
 
             // Step 5: Ensure the password meets folder complexity requirements
             // Capture the score to reuse it — avoids running zxcvbn a second time on the ciphertext
-            $complexityLevel = $this->checkPasswordComplexity($password, array_merge($itemInfos, ['folderId' => $folderId]));
+            $complexityLevel = $this->checkPasswordComplexity($password, array_merge($itemInfos, ['folderId' => $folderId]), isUpdate: false);
 
             // Step 6: Check for duplicates in the system
             $this->checkForDuplicates($label, $SETTINGS, $itemInfos);
@@ -946,10 +946,11 @@ class ItemModel
      * Returns the computed complexity level so the caller can reuse it without a second zxcvbn pass.
      * @param string $password - The plaintext password to check
      * @param array $itemInfos - Folder settings including password complexity requirements
+     * @param bool $isUpdate - Use the editing exception when changing an existing password
      * @return int - The computed complexity level (one of TP_PW_STRENGTH_*)
      * @throws Exception - If the password is unassessable or its complexity is insufficient
      */
-    private function checkPasswordComplexity(string $password, array $itemInfos) : int
+    private function checkPasswordComplexity(string $password, array $itemInfos, bool $isUpdate) : int
     {
         // Check existence first
         if (isset($itemInfos['folderId']) === false) {
@@ -982,7 +983,8 @@ class ItemModel
         }
         $passwordStrengthScore = convertPasswordStrength((int) $passwordStrength['score']);
 
-        if ($passwordStrengthScore < $requested_folder_complexity && (int) $itemInfos['no_complex_check_on_creation'] === 0) {
+        $bypassComplexity = (int) $itemInfos[$isUpdate ? 'no_complex_check_on_modification' : 'no_complex_check_on_creation'];
+        if ($passwordStrengthScore < $requested_folder_complexity && $bypassComplexity === 0) {
             throw new InvalidArgumentException('Password strength is too low');
         }
 
@@ -1995,7 +1997,7 @@ class ItemModel
                     $itemInfos = $this->getFolderSettings((int) $folderId);
 
                     // Check password complexity — capture score to avoid re-running zxcvbn on the ciphertext
-                    $complexityLevel = $this->checkPasswordComplexity($newPassword, array_merge($itemInfos, ['folderId' => $folderId]));
+                    $complexityLevel = $this->checkPasswordComplexity($newPassword, array_merge($itemInfos, ['folderId' => $folderId]), isUpdate: true);
 
                     // Encrypt password
                     $cryptedData = $this->encryptPassword($newPassword);

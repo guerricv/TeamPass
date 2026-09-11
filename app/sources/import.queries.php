@@ -1830,7 +1830,11 @@ function createFolder($folderTitle, $parentId, $folderLevel, $startPathLevel, $l
         $parentId
     );
     if (DB::count() === 0) {
-        //do query
+        // Like FolderManager, copy the parent's special options only at creation.
+        $parentOptions = DB::queryFirstRow(
+            'SELECT bloquer_creation, bloquer_modification FROM ' . prefixTable('nested_tree') . ' WHERE id = %i',
+            (int) $parentId
+        );
         DB::insert(
             prefixTable('nested_tree'),
             array(
@@ -1839,6 +1843,8 @@ function createFolder($folderTitle, $parentId, $folderLevel, $startPathLevel, $l
                 'nlevel' => (int) ($folderLevel + $startPathLevel),
                 'categories' => '',
                 'personal_folder' => $isPersonalFolder,
+                'bloquer_creation' => (int) ($parentOptions['bloquer_creation'] ?? 0),
+                'bloquer_modification' => (int) ($parentOptions['bloquer_modification'] ?? 0),
             )
         );
         $id = DB::insertId();

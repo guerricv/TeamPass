@@ -870,6 +870,10 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
     // changes (the server rejects a lower value)
     $('#new-parent').on('change', function() {
         const parentId = parseInt($(this).val())
+        const $parentRow = $('#table-folders tr[data-id="' + parentId + '"]')
+        // Initialize the new folder's options from its parent; the user can override either.
+        $('#new-add-restriction').iCheck(parseInt($parentRow.find('td:eq(5)').data('value'), 10) === 1 ? 'check' : 'uncheck')
+        $('#new-edit-restriction').iCheck(parseInt($parentRow.find('td:eq(6)').data('value'), 10) === 1 ? 'check' : 'uncheck')
         if (isNaN(parentId) === true || parentId === 0) return
         const parentComplexity = $('#table-folders tr[data-id="' + parentId + '"]').data('complexity')
         if (parentComplexity !== undefined && parentComplexity !== '') {

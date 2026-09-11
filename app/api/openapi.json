@@ -1656,10 +1656,12 @@
                         "type": "integer"
                     },
                     "create_auth_without": {
-                        "type": "integer"
+                        "type": "integer",
+                        "description": "Allow item creation below the folder's minimum password strength (0/1). Omitted: inherit the parent's value, or 0 at root. Explicit 0 disables the exception. Does not relax the subfolder complexity floor."
                     },
                     "edit_auth_without": {
-                        "type": "integer"
+                        "type": "integer",
+                        "description": "Allow item editing below the folder's minimum password strength (0/1). Omitted: inherit the parent's value, or 0 at root. Explicit 0 disables the exception. Inheritance is a one-time copy, independent of role permission inheritance."
                     },
                     "icon": {
                         "type": "string"
@@ -1713,10 +1715,12 @@
                         "type": "integer"
                     },
                     "create_auth_without": {
-                        "type": "integer"
+                        "type": "integer",
+                        "description": "Allow item creation below the folder's minimum password strength (0/1). Omitted: preserve the current value, including when moving the folder."
                     },
                     "edit_auth_without": {
-                        "type": "integer"
+                        "type": "integer",
+                        "description": "Allow item editing below the folder's minimum password strength (0/1). Omitted: preserve the current value, including when moving the folder."
                     },
                     "icon": {
                         "type": "string"

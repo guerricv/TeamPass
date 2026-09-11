@@ -100,7 +100,7 @@ jobs:
         run: php app/vendor/phpunit/phpunit/phpunit --colors=never
 
   javascript-tests:
-    name: Login JavaScript tests
+    name: JavaScript tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,8 +110,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run login submission regression tests
-        run: node --test tests/JavaScript/login-submission.test.cjs
+      - name: Run JavaScript regression tests
+        run: node --test tests/JavaScript/*.test.cjs
 
   static-analysis:
     name: PHPStan (level 4)
