@@ -2255,45 +2255,15 @@ switch ($type) {
             }
         }
 
-        $reasonKeys = [
-            'label' => 'label',
-            'category' => 'category',
-            'description' => 'description',
-            'anyone_can_modify' => 'anyone_can_modify',
-            'allow_comments' => 'kb_allow_comments',
-            'associated_items' => 'kb_associated_items',
-            'attachments_upload' => 'kb_attachment_uploaded',
-            'attachments_delete' => 'kb_attachment_deleted',
-            'comment_add' => 'kb_comment_added',
-            'comment_delete' => 'kb_comment_deleted',
-        ];
         foreach ($rows as &$row) {
-            $user = $usersById[$row['user_id']] ?? [];
-            $fullName = trim(trim((string) ($user['name'] ?? '')) . ' ' . trim((string) ($user['lastname'] ?? '')));
-            $login = (string) ($user['login'] ?? $row['user_login']);
-            $row['user_display'] = $fullName === '' ? $login : $fullName . ($login === '' ? '' : ' [' . $login . ']');
-            $row['action_display'] = $lang->get($row['action']);
-            $row['reason_display'] = implode(', ', array_map(
-                static fn (string $reason): string => isset($reasonKeys[$reason]) ? (string) $lang->get($reasonKeys[$reason]) : $reason,
-                explode(', ', $row['reason'])
-            ));
+            $row = formatKnowledgeBaseLogRow($row, $usersById[$row['user_id']] ?? [], $lang);
         }
         unset($row);
 
-        $filteredRows = array_values(array_filter($rows, static function (array $row) use ($searchValue): bool {
-            if ($searchValue === '') {
-                return true;
-            }
-
-            $haystack = mb_strtolower(
-                (string) ($row['label'] ?? '') . ' ' .
-                (string) ($row['user_display'] ?? '') . ' ' .
-                (string) ($row['action_display'] ?? '') . ' ' .
-                (string) ($row['reason_display'] ?? '')
-            );
-
-            return mb_strpos($haystack, mb_strtolower($searchValue)) !== false;
-        }));
+        $filteredRows = array_values(array_filter(
+            $rows,
+            static fn (array $row): bool => knowledgeBaseLogRowMatchesSearch($row, $searchValue)
+        ));
 
         $recordsFiltered = count($filteredRows);
         $pagedRows = array_slice($filteredRows, $start, $length);

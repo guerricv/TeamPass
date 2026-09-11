@@ -576,7 +576,6 @@ if (isset($params['action']) && $params['action'] === 'connections') {
     require_once TEAMPASS_APP . '/sources/main.functions.php';
     //Columns name
     $aColumns = ['l.date', 'i.id', 'i.label', 't.title', 'u.login', 'l.action', 'l.raison', 't.personal_folder', 'u.name', 'u.lastname'];
-    $searchColumns = getItemLogSearchColumns($params['search']['column'] ?? 'all');
 
     // Ordering
     $orderColumn = $aColumns[0];
@@ -585,13 +584,7 @@ if (isset($params['action']) && $params['action'] === 'connections') {
     }
 
     // Filtering
-    $sWhere = new WhereClause('AND');
-    if ($searchValue !== '') {
-        $subclause = $sWhere->addClause('OR');
-        foreach ($searchColumns as $column) {
-            $subclause->add($column.' LIKE %ss', $searchValue);
-        }
-    }
+    $sWhere = buildItemLogSearchFilter($params['search']['column'] ?? 'all', $searchValue, $lang);
 
     // Get the total number of records
     $iTotal = DB::queryFirstField(

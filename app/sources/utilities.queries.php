@@ -685,6 +685,8 @@ logItems(
             ) {
                 $purgeLogin = null;
                 if ($purgeType === 'failed' && $purgeUserId > 0) {
+                    // Historical logins are not stored on the account: attempts before a rename
+                    // remain when their submitted login differs from the current one.
                     $purgeUser = DB::queryFirstRow(
                         'SELECT login FROM ' . prefixTable('users') . ' WHERE id = %i',
                         $purgeUserId

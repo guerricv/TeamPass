@@ -769,17 +769,16 @@ if ($checkUserAccess->checkSession() === false || $checkUserAccess->userAccessPa
             return;
         }
 
-        var columns = <?php echo json_encode([
-            ['title' => $lang->get('date'), 'column' => 'l.date'],
+        const columns = <?php echo json_encode([
             ['title' => $lang->get('id'), 'column' => 'i.id'],
             ['title' => $lang->get('label'), 'column' => 'i.label'],
             ['title' => $lang->get('folder'), 'column' => 't.title'],
             ['title' => $lang->get('user'), 'column' => 'u.login'],
             ['title' => $lang->get('action'), 'column' => 'l.action'],
         ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE); ?>;
-        var searchColumn = 'all';
+        let searchColumn = 'all';
         $('#table-items').one('preInit.dt', function() {
-            var $select = $('<select class="form-control" id="items-search-column"></select>');
+            const $select = $('<select class="form-control" id="items-search-column"></select>');
             $select.attr('aria-label', <?php echo json_encode($lang->get('logs_search_column'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
             $select.append($('<option>').val('all').text(<?php echo json_encode($lang->get('logs_search_all_columns'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>));
             $.each(columns, function(i, opt) {

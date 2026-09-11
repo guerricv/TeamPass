@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
+use TeampassClasses\Language\Language;
 
 // Real production logic (DB-free), included by app/sources/main.functions.php as well.
 require_once __DIR__ . '/../../app/sources/log_display_logic.php';
@@ -153,24 +154,11 @@ class UtilitiesLogsEncodingTest extends TestCase
                 $knowledgeBase
             );
         }
+        self::assertStringContainsString('formatKnowledgeBaseLogRow(', $knowledgeBase);
+        self::assertStringContainsString('knowledgeBaseLogRowMatchesSearch(', $knowledgeBase);
     }
 
-    private function knowledgeBaseLogData(array $rows, array $usersById, string $searchValue = '', string $language = 'french'): array
-    {
-        // Execute the handler's real display, search and pagination logic with disposable rows.
-        $source = $this->source('app/sources/kb.queries.php');
-        $branch = strpos($source, "case 'datatables_logs':");
-        $blockStart = strpos($source, '$reasonKeys = [', $branch);
-        $blockEnd = strpos($source, 'echo json_encode([', $blockStart);
-        $lang = new \TeampassClasses\Language\Language($language, __DIR__ . '/../../app/includes/language');
-        $SETTINGS = ['date_format' => 'Y-m-d', 'time_format' => 'H:i:s'];
-        $start = 0;
-        $length = 10;
-        eval(substr($source, $blockStart, $blockEnd - $blockStart));
-
-        return $dataRows;
-    }
-
+    /** Test the display/search helpers directly with current catalog wording. */
     public function testKnowledgeBaseLogsTranslateAndSearchDisplayedValuesWhileKeepingTextSafe(): void
     {
         $rows = [
@@ -179,20 +167,29 @@ class UtilitiesLogsEncodingTest extends TestCase
             ['date' => 102, 'label' => '<b>Title</b>', 'user_id' => 44, 'user_login' => '<b>login</b>', 'action' => 'legacy_action', 'reason' => '<img src=x onerror=alert(1)>'],
         ];
         $users = [42 => ['name' => 'Clémence', 'lastname' => 'Dupont', 'login' => 'clem']];
-        $data = $this->knowledgeBaseLogData($rows, $users);
-        self::assertSame('Clémence Dupont [clem]', $data[0][2]);
-        self::assertSame('Vu', $data[0][3]);
-        self::assertSame('old-login', $data[1][2]);
-        self::assertSame('Modification', $data[1][3]);
-        self::assertSame('Intitulé, Autoriser les commentaires, Éléments associés', $data[1][4]);
-        self::assertSame('&lt;b&gt;login&lt;/b&gt;', $data[2][2]);
-        self::assertSame('legacy_action', $data[2][3]);
-        self::assertSame('&lt;img src=x onerror=alert(1)&gt;', $data[2][4]);
-        foreach (['clémence', 'Dupont', 'Vu'] as $search) {
-            self::assertSame([$data[0]], $this->knowledgeBaseLogData($rows, $users, $search));
+        foreach (['french', 'english'] as $language) {
+            $lang = new Language($language, __DIR__ . '/../../app/includes/language');
+            $data = array_map(static fn (array $row): array => formatKnowledgeBaseLogRow($row, $users[$row['user_id']] ?? [], $lang), $rows);
+            self::assertSame('Clémence Dupont [clem]', $data[0]['user_display']);
+            self::assertSame($lang->get('at_shown'), $data[0]['action_display']);
+            self::assertSame('old-login', $data[1]['user_display']);
+            self::assertSame($lang->get('at_modification'), $data[1]['action_display']);
+            self::assertSame('at_modification', $data[1]['action']);
+            self::assertSame(
+                implode(', ', [$lang->get('label'), $lang->get('kb_allow_comments'), $lang->get('kb_associated_items')]),
+                $data[1]['reason_display']
+            );
+            self::assertSame('&lt;b&gt;login&lt;/b&gt;', normalizeLogDisplayValue($data[2]['user_display']));
+            self::assertSame('legacy_action', $data[2]['action_display']);
+            self::assertSame('&lt;img src=x onerror=alert(1)&gt;', normalizeLogDisplayValue($data[2]['reason_display']));
+            foreach (['clémence', 'Dupont', (string) $lang->get('at_shown')] as $search) {
+                self::assertTrue(knowledgeBaseLogRowMatchesSearch($data[0], $search));
+                self::assertFalse(knowledgeBaseLogRowMatchesSearch($data[1], $search));
+            }
+            self::assertTrue(knowledgeBaseLogRowMatchesSearch($data[1], (string) $lang->get('kb_associated_items')));
+            self::assertTrue(knowledgeBaseLogRowMatchesSearch($data[0], ''));
+            self::assertFalse(knowledgeBaseLogRowMatchesSearch($data[0], 'no-such-log-value'));
         }
-        self::assertSame([$data[1]], $this->knowledgeBaseLogData($rows, $users, 'Éléments associés'));
-        self::assertSame('Accessed', $this->knowledgeBaseLogData($rows, $users, 'Accessed', 'english')[0][3]);
     }
 
     // ----------------------------------------------------------- client side

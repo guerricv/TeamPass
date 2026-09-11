@@ -3,10 +3,35 @@
 declare(strict_types=1);
 
 /**
+ * Teampass - a collaborative passwords manager.
+ * ---
+ * This file is part of the TeamPass project.
+ *
+ * TeamPass is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3 of the License.
+ *
+ * TeamPass is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Certain components of this file may be under different licenses. For
+ * details, see the `licenses` directory or individual file headers.
+ * ---
  * Database-free filtering rules for the monitoring logs.
  *
- * @license GPL-3.0
+ * @file      logs_filter_logic.php
+ * @author    Nils Laumaillé (nils@teampass.net)
+ * @copyright 2009-2026 Teampass.net
+ * @license   GPL-3.0
+ * @see       https://www.teampass.net
  */
+
+use TeampassClasses\Language\Language;
 
 /**
  * Resolve an item-log search column against the columns offered by the page.
@@ -16,7 +41,7 @@ declare(strict_types=1);
  */
 function getItemLogSearchColumns(mixed $column): array
 {
-    $columns = ['l.date', 'i.id', 'i.label', 't.title', 'u.login', 'l.action'];
+    $columns = ['i.id', 'i.label', 't.title', 'u.login', 'l.action'];
     if ($column === 'u.login') {
         return ['u.login', 'u.name', 'u.lastname'];
     }
@@ -25,6 +50,56 @@ function getItemLogSearchColumns(mixed $column): array
     }
 
     return array_merge($columns, ['u.name', 'u.lastname']);
+}
+
+/**
+ * Find known item actions by their translated label or stored code.
+ *
+ * @return string[]
+ */
+function getItemLogActionSearchCodes(string $searchValue, Language $lang): array
+{
+    $actions = [
+        'at_creation', 'at_modification', 'at_shown', 'at_export', 'at_restored', 'at_delete', 'at_copy',
+        'at_moved', 'at_manual', 'at_import', 'at_access',
+        'at_password_copied', 'at_password_shown', 'at_password_shown_edit_form',
+    ];
+    $matches = [];
+    foreach ($actions as $action) {
+        if (mb_stripos($action, $searchValue, 0, 'UTF-8') !== false
+            || mb_stripos(html_entity_decode((string) $lang->get($action), ENT_QUOTES | ENT_HTML5, 'UTF-8'), $searchValue, 0, 'UTF-8') !== false
+        ) {
+            $matches[] = $action;
+        }
+    }
+
+    return $matches;
+}
+
+/**
+ * Build an item-log search predicate without opening a database connection.
+ * An action with no matching label/code must produce no matches, not an empty filter.
+ */
+function buildItemLogSearchFilter(mixed $column, string $searchValue, Language $lang): WhereClause
+{
+    $where = new WhereClause('AND');
+    if ($searchValue !== '') {
+        $search = $where->addClause('OR');
+        foreach (getItemLogSearchColumns($column) as $searchColumn) {
+            if ($searchColumn === 'l.action') {
+                $actions = getItemLogActionSearchCodes($searchValue, $lang);
+                if ($actions === []) {
+                    $search->add('1 = 0');
+                } else {
+                    $search->add('l.action IN %ls', $actions);
+                }
+            } else {
+                $search->add($searchColumn . ' LIKE %ss', $searchValue);
+            }
+        }
+    }
+
+    return $where;
 }
 
 /**
@@ -119,6 +194,8 @@ function buildLogsPurgeFilter(
                 return null;
             }
             // Failed authentications store the submitted login in field_1, and the IP in qui.
+            // Only the current login is known: attempts under a different pre-rename login remain.
+            // Equality follows the database collation (normally utf8mb4_unicode_ci), including case variants.
             // The API appends a marker; only API-compatible labels may match that variant.
             $userWhere = $where->addClause('OR');
             $userWhere->add('field_1 = %s', $userLogin);

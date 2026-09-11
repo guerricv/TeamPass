@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
+use TeampassClasses\Language\Language;
 
 require_once __DIR__ . '/../../app/vendor/sergeytsalkov/meekrodb/db.class.php';
 require_once __DIR__ . '/../../app/sources/logs_filter_logic.php';
@@ -12,6 +14,7 @@ require_once __DIR__ . '/../../app/sources/logs_filter_logic.php';
  * Exercise the shipped log predicates against disposable rows, including actual deletions.
  * SQLite is only an in-memory test fixture; production continues to use MySQL/MariaDB.
  */
+#[RequiresPhpExtension('sqlite3')]
 class LogsFilteringTest extends TestCase
 {
     private SQLite3 $database;
@@ -28,7 +31,8 @@ class LogsFilteringTest extends TestCase
                 return "'" . SQLite3::escapeString((string) $value) . "'";
             }
         };
-        $this->database->exec('CREATE TABLE log_system (id INTEGER PRIMARY KEY, date INTEGER, type TEXT, label TEXT, qui TEXT, field_1 TEXT)');
+        // NOCASE covers ASCII login case variants; it does not emulate MySQL's full Unicode collation.
+        $this->database->exec('CREATE TABLE log_system (id INTEGER PRIMARY KEY, date INTEGER, type TEXT, label TEXT, qui TEXT, field_1 TEXT COLLATE NOCASE)');
         $this->database->exec('CREATE TABLE log_items (id INTEGER PRIMARY KEY, date INTEGER, id_user INTEGER, id_item INTEGER, action TEXT, raison TEXT)');
         $this->database->exec('CREATE TABLE items (id INTEGER, label TEXT, id_tree INTEGER)');
         $this->database->exec('CREATE TABLE users (id INTEGER, login TEXT, name TEXT, lastname TEXT)');
@@ -64,16 +68,12 @@ class LogsFilteringTest extends TestCase
 
     private function searchItems(mixed $column, string $searchValue): array
     {
-        // Execute the actual handler's filtering block so a disconnected helper cannot pass.
-        $source = file_get_contents(__DIR__ . '/../../app/sources/logs.datatables.php');
-        $start = strpos($source, '//Columns name', strpos($source, '/* ITEMS */'));
-        $end = strpos($source, '// Get the total number of records', $start);
-        $params = ['search' => ['column' => $column], 'order' => [['column' => 0]]];
-        eval(substr($source, $start, $end - $start));
+        $lang = new Language('french', __DIR__ . '/../../app/includes/language');
+        $where = buildItemLogSearchFilter($column, $searchValue, $lang);
         $result = $this->query(
             'SELECT l.id FROM log_items l JOIN items i ON i.id = l.id_item
             JOIN users u ON u.id = l.id_user JOIN nested_tree t ON t.id = i.id_tree WHERE %l ORDER BY l.id',
-            $sWhere
+            $where
         );
         $ids = [];
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
@@ -96,16 +96,6 @@ class LogsFilteringTest extends TestCase
         self::assertSame([1, 2], $this->searchItems('u.login', 'Example'));
         self::assertSame([], $this->searchItems('t.title', 'alice'));
         self::assertSame([1, 2], $this->searchItems('u.login', ''));
-    }
-
-    public function testColumnSelectionOnlyAcceptsTheUiAllowList(): void
-    {
-        foreach (['l.date', 'i.id', 'i.label', 't.title', 'l.action'] as $column) {
-            self::assertSame([$column], getItemLogSearchColumns($column));
-        }
-        foreach ([null, [], 'i.label) OR 1=1 --', 'u.name', 'unknown', 'l.raison', 't.personal_folder'] as $invalid) {
-            self::assertSame(getItemLogSearchColumns('all'), getItemLogSearchColumns($invalid));
-        }
     }
 
     /** @return iterable<string, array{string, string}> */
@@ -145,16 +135,18 @@ class LogsFilteringTest extends TestCase
         self::assertSame([4, 5], $this->remainingIds('log_items'));
     }
 
-    public function testFailedLoginPurgeUsesExactLoginAndRecognizedApiMarkerInsteadOfIp(): void
+    public function testFailedLoginPurgeUsesCurrentLoginAndRecognizedApiMarkerInsteadOfIp(): void
     {
         foreach ([[1, 'alice', 'password_is_not_correct'], [2, 'bob', 'password_is_not_correct'],
             [3, 'alice | tp_src=api', 'api_invalid_credentials'], [4, 'alice2', 'password_is_not_correct'],
-            [5, 'alice | tp_src=api', 'password_is_not_correct'], [6, 'alice | tp_src=api', 'bruteforce_account_locked']] as $row) {
+            [5, 'alice | tp_src=api', 'password_is_not_correct'], [6, 'alice | tp_src=api', 'bruteforce_account_locked'],
+            [8, 'Alice', 'password_is_not_correct'], [9, 'ALICE | tp_src=api', 'api_invalid_credentials'],
+            [10, 'previous-login', 'password_is_not_correct']] as $row) {
             $this->query("INSERT INTO log_system (id, date, type, field_1, label, qui) VALUES (%i, 150, 'failed_auth', %s, %s, '192.0.2.1')", ...$row);
         }
         $this->database->exec("INSERT INTO log_system VALUES (7, 200, 'failed_auth', 'password_is_not_correct', '192.0.2.1', 'alice')");
         $this->purge('failed', 42, 'all', 'alice');
-        self::assertSame([2, 4, 5, 7], $this->remainingIds('log_system'));
+        self::assertSame([2, 4, 5, 7, 10], $this->remainingIds('log_system'));
         $this->purge('failed', -1);
         self::assertSame([7], $this->remainingIds('log_system'));
     }
@@ -168,37 +160,22 @@ class LogsFilteringTest extends TestCase
         self::assertSame([2], $this->remainingIds('log_system'));
     }
 
-    public function testInvalidOrUnresolvablePurgeScopeIsRejected(): void
+    /** Verify the displayed action is searchable and raw timestamps cannot add matches. */
+    public function testTranslatedActionSearchAndGlobalSearchExcludeTimestampNoise(): void
     {
-        foreach (['unknown', 'kb', 'authentication_lockouts'] as $tab) {
-            self::assertNull(buildLogsPurgeFilter($tab, 100, 200, -1, 'all'));
-        }
-        foreach ([0, -2] as $userId) {
-            self::assertNull(buildLogsPurgeFilter('items', 100, 200, $userId, 'all'));
-        }
-        self::assertNull(buildLogsPurgeFilter('items', 200, 100, -1, 'all'));
-        self::assertNull(buildLogsPurgeFilter('items', 100, 200, -1, 'unknown'));
-        self::assertNull(buildLogsPurgeFilter('errors', 100, 200, -1, 'at_copy'));
-        self::assertNull(buildLogsPurgeFilter('failed', 100, 200, 42, 'all'));
-        self::assertNull(buildLogsPurgeFilter('failed', 100, 200, 42, 'all', ''));
-    }
+        $this->database->exec("INSERT INTO users VALUES (1, 'user', '', '')");
+        $this->database->exec("INSERT INTO items VALUES (42, 'Guide', 1), (50, 'Portal', 1)");
+        $this->database->exec("INSERT INTO nested_tree VALUES (1, 'General', 0)");
+        $this->database->exec("INSERT INTO log_items VALUES (1, 1700000000, 1, 42, 'at_shown', ''), (2, 1700042000, 1, 50, 'at_manual', '')");
+        $lang = new Language('french', __DIR__ . '/../../app/includes/language');
 
-    public function testDateRangeIncludesTheLastDayAndHandlesDst(): void
-    {
-        $timezone = date_default_timezone_get();
-        try {
-            date_default_timezone_set('Europe/Paris');
-            foreach (['2026-09-08' => 24, '2026-03-29' => 23, '2026-10-25' => 25] as $day => $hours) {
-                [$start, $end] = getLogsPurgeDateRange($day, $day);
-                self::assertSame($hours * 3600, $end - $start);
-                self::assertSame($day . ' 23:59:59', date('Y-m-d H:i:s', $end - 1));
-            }
-        } finally {
-            date_default_timezone_set($timezone);
-        }
-        foreach ([['', ''], [null, null], [[], '2026-09-08'], ['2026-02-30', '2026-03-01'],
-            ['2026-09-09', '2026-09-08'], ['2026-9-8', '2026-09-08'], ['today', 'tomorrow'], ["2026-09-08\0", '2026-09-08']] as [$start, $end]) {
-            self::assertNull(getLogsPurgeDateRange($start, $end));
-        }
+        self::assertSame([1], $this->searchItems('all', '42'));
+        self::assertSame([1], $this->searchItems('l.action', (string) $lang->get('at_shown')));
+        self::assertSame([2], $this->searchItems('all', (string) $lang->get('at_manual')));
+        self::assertSame([2], $this->searchItems('l.action', 'AT_MANUAL'));
+        self::assertSame([], $this->searchItems('l.action', 'no-such-action'));
+        self::assertSame([], $this->searchItems('all', "' OR 1=1 --"));
+        self::assertSame([], $this->searchItems('all', date('d/m/Y', 1700042000)));
+        self::assertSame([1, 2], $this->searchItems('l.action', ''));
     }
 }

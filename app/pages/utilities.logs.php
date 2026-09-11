@@ -289,7 +289,11 @@ $kbEnabled = isset($SETTINGS['enable_kb']) === true && (int) $SETTINGS['enable_k
                                     <select class="form-control" id="purge-filter-user">
                                         <option value="-1"><?php echo $lang->get('all'); ?></option>
                                     <?php
-                                    $rows = DB::query('SELECT id, login, name, lastname FROM ' . prefixTable('users') . ' WHERE id > 0 ORDER BY login');
+                                    $rows = DB::query(
+                                        'SELECT id, login, name, lastname FROM ' . prefixTable('users') . '
+                                        WHERE id > 0 AND id NOT IN %li ORDER BY login',
+                                        [(int) OTV_USER_ID, (int) TP_USER_ID, (int) SSH_USER_ID, (int) API_USER_ID]
+                                    );
                                     foreach ($rows as $record) {
                                         $displayName = trim(normalizeLogDisplayValue($record['name']) . ' ' . normalizeLogDisplayValue($record['lastname']));
                                         echo '<option value="' . (int) $record['id'] . '">'
