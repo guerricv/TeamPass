@@ -42,6 +42,10 @@ declare(strict_types=1);
     var debugJavascript = false;
     var mfaStepPending = false;
     var cachedMfaData = null;
+    var loginInProgress = false;
+    var loginNavigationPending = false;
+    var loginReadOnlyFields = null;
+    var loginDisabledControls = null;
 
     // Encryption key shared with the server for this page. It is not read-only:
     // it is renewed in place when the server-side session has been garbage
@@ -55,6 +59,67 @@ declare(strict_types=1);
     // Last moment the page was known to be in sync with the server-side session.
     var lastSessionKeyCheck = Date.now();
     var sessionKeyCheckInProgress = false;
+    var sessionKeyCheckRequest = null;
+    // Bound session housekeeping without limiting the LDAP/MFA authentication request.
+    const sessionKeyRequestTimeout = 10000;
+
+    /**
+     * Freeze the submitted form while preserving controls already locked by the page.
+     * Read-only text fields remain focusable when the response opens the MFA step.
+     *
+     * @returns {void}
+     */
+    function beginLoginAttempt() {
+        if (loginInProgress === true) {
+            return;
+        }
+        loginInProgress = true;
+        loginReadOnlyFields = $('#login, #pw, #session_duration, #ga_code, #yubico_key, #yubico_user_id, #yubico_user_key')
+            .filter(':not([readonly])').prop('readOnly', true);
+        loginDisabledControls = $('.login-box button:enabled, .login-box input[type="radio"]:enabled')
+            .prop('disabled', true);
+        $('.login-box').attr('aria-busy', 'true');
+    }
+
+    /**
+     * Release the form after the entire attempt, including a possible session-key retry.
+     * Keep it locked while navigating away or waiting for the refresh dialog.
+     *
+     * @returns {void}
+     */
+    function finishLoginAttempt() {
+        if (loginNavigationPending === true) {
+            return;
+        }
+        if (loginReadOnlyFields !== null) {
+            loginReadOnlyFields.prop('readOnly', false);
+            loginReadOnlyFields = null;
+        }
+        if (loginDisabledControls !== null) {
+            loginDisabledControls.prop('disabled', false);
+            loginDisabledControls = null;
+        }
+        $('.login-box').attr('aria-busy', 'false');
+        loginInProgress = false;
+    }
+
+    /**
+     * Make network and client-side processing failures actionable without logging credentials.
+     *
+     * @returns {void}
+     */
+    function showLoginRequestError() {
+        $('.login-box').show();
+        toastr.remove();
+        toastr.error(
+            <?php echo json_encode($lang->get('server_answer_error'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>,
+            <?php echo json_encode($lang->get('caution'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>, {
+                timeOut: 5000,
+                progressBar: true,
+                positionClass: 'toast-bottom-right'
+            }
+        );
+    }
 
     function hideForgotLocalPasswordLink() {
         $('#forgot-local-password-container').addClass('hidden');
@@ -101,7 +166,7 @@ declare(strict_types=1);
      *
      * @param {function} onSuccess Action to replay once the key is renewed
      *
-     * @returns {void}
+     * @returns {object|undefined} Promise covering renewal and the replayed action.
      */
     function recoverFromStaleSessionKey(onSuccess) {
         if (sessionKeyRecoveryDone === true) {
@@ -110,15 +175,19 @@ declare(strict_types=1);
         }
         sessionKeyRecoveryDone = true;
 
-        $.post(
-            'sources/identify.php', {
+        return $.ajax({
+            url: 'sources/identify.php',
+            type: 'POST',
+            timeout: sessionKeyRequestTimeout,
+            data: {
                 type: 'refresh_session_key'
-            },
+            }
+        }).then(
             function(answer) {
                 const parsed = safeParseJSONMaybe(answer);
 
-                if (parsed.ok !== true ||
-                    typeof parsed.value.key === 'undefined' ||
+                if (parsed.ok !== true || parsed.value === null ||
+                    typeof parsed.value.key !== 'string' ||
                     parsed.value.key === ''
                 ) {
                     showSessionRefreshDialog();
@@ -127,11 +196,12 @@ declare(strict_types=1);
 
                 tpSessionKey = parsed.value.key;
                 lastSessionKeyCheck = Date.now();
-                onSuccess();
+                return onSuccess();
+            },
+            function() {
+                showSessionRefreshDialog();
             }
-        ).fail(function() {
-            showSessionRefreshDialog();
-        });
+        );
     }
 
     /**
@@ -142,6 +212,8 @@ declare(strict_types=1);
      * @returns {void}
      */
     function showSessionRefreshDialog() {
+        beginLoginAttempt();
+        loginNavigationPending = true;
         let countdown = 5;
 
         storeLoginFormState();
@@ -189,18 +261,22 @@ declare(strict_types=1);
      */
     function checkSessionKeyFreshness() {
         // Throttled: a focus event is fired on every click back into the window.
-        if (sessionKeyCheckInProgress === true || (Date.now() - lastSessionKeyCheck) < 300000) {
+        if (loginInProgress === true || loginNavigationPending === true ||
+            sessionKeyCheckInProgress === true || (Date.now() - lastSessionKeyCheck) < 300000) {
             return;
         }
         sessionKeyCheckInProgress = true;
 
-        $.post(
-            'sources/identify.php', {
+        sessionKeyCheckRequest = $.ajax({
+            url: 'sources/identify.php',
+            type: 'POST',
+            timeout: sessionKeyRequestTimeout,
+            data: {
                 type: 'is_session_key_valid',
                 key: tpSessionKey
-            },
+            }
+        }).then(
             function(answer) {
-                sessionKeyCheckInProgress = false;
                 lastSessionKeyCheck = Date.now();
 
                 const parsed = safeParseJSONMaybe(answer);
@@ -211,6 +287,7 @@ declare(strict_types=1);
                 // Nothing typed yet: a plain refresh is the cleanest recovery.
                 if ($('#pw').val() === '') {
                     storeLoginFormState();
+                    loginNavigationPending = true;
                     document.location.reload();
                     return;
                 }
@@ -218,9 +295,11 @@ declare(strict_types=1);
                 // Credentials are being typed: renew the key without touching
                 // the form, so nothing the user typed is lost.
                 sessionKeyRecoveryDone = false;
-                recoverFromStaleSessionKey(function() {});
+                return recoverFromStaleSessionKey(function() {});
             }
-        ).fail(function() {
+        ).then(function() {
+            sessionKeyCheckInProgress = false;
+        }, function() {
             sessionKeyCheckInProgress = false;
         });
     }
@@ -317,6 +396,14 @@ declare(strict_types=1);
         });
         $(window).on('focus', checkSessionKeyFreshness);
 
+        // Back navigation from an identity provider can restore this locked page
+        // from the browser cache. Reload to obtain the current server session.
+        $(window).on('pageshow', function(event) {
+            if (event.originalEvent.persisted === true && loginNavigationPending === true) {
+                document.location.reload();
+            }
+        });
+
         // Manage case of oauth2 login
         var userOauth2Info = <?php echo empty($userOauth2InfoJson) ? 'null' : $userOauth2InfoJson; ?>;
         var autoLogin = parseInt(<?php echo $SETTINGS['oauth2_auto_login'] ?? 0; ?>);
@@ -367,9 +454,6 @@ declare(strict_types=1);
 
         // Manage DUO SEC login
         if ($("#2fa_user_selection").val() === "duo" && $("#duo_code").val() !== "" && $("#duo_state").val() !== "") {
-            // disable form fields
-            $("#login, #pw, #session_duration, #but_identify_user").prop("disabled", true);
-
             if (debugJavascript === true) {
                 console.log('After identify_duo_user_check');
                 console.log('{ Duo code: ' + $("#duo_code").val() + ', Duo state: ' + $("#duo_state").val() + '}');
@@ -394,6 +478,9 @@ declare(strict_types=1);
 
         // Click on log in button
         $('#but_identify_user').click(function() {
+            if (loginInProgress === true || loginNavigationPending === true) {
+                return;
+            }
             if (debugJavascript === true) {
                 console.log('User starts auth through button but_identify_user click');
             }
@@ -405,10 +492,12 @@ declare(strict_types=1);
         // Click on log in button with Azure Entra
         if($("#but_login_with_oauth2").length > 0) {
             $('#but_login_with_oauth2').click(function() {
+                if (loginInProgress === true || loginNavigationPending === true) {
+                    return;
+                }
                 if (debugJavascript === true) {
-                console.log('User starts auth through button but_login_with_oauth2 click');
-            }
-                $('#but_login_with_oauth2, #but_identify_user').prop('disabled', true);
+                    console.log('User starts auth through button but_login_with_oauth2 click');
+                }
                 launchIdentify(false, '<?php echo isset($nextUrl) === true ? $nextUrl : ''; ?>', false, true);
             });
         }
@@ -457,8 +546,8 @@ declare(strict_types=1);
 
     $('.submit-button').keypress(function(event) {
         if (event.keyCode === 10 || event.keyCode === 13) {
-            launchIdentify(false, '<?php echo isset($nextUrl) === true ? $nextUrl : ''; ?>', '');
             event.preventDefault();
+            launchIdentify(false, '<?php echo isset($nextUrl) === true ? $nextUrl : ''; ?>', '');
         }
     });
 
@@ -899,9 +988,18 @@ declare(strict_types=1);
     });
 
     /**
+     * Start one primary-factor or MFA submission, including any pending key renewal.
      *
+     * @param {boolean} isDuo Whether this is the Duo callback.
+     * @param {string} redirect Requested destination after authentication.
+     * @param {string} psk Personal salt key, when supplied.
+     * @param {boolean} oauth2 Whether to navigate to the OAuth2 provider.
+     * @returns {object|boolean} Completion promise, or false when no request is needed.
      */
     function launchIdentify(isDuo, redirect, psk, oauth2 = false) {
+        if (loginInProgress === true || loginNavigationPending === true) {
+            return false;
+        }
         if (redirect == undefined) {
             redirect = ""; //Check if redirection
         }
@@ -909,6 +1007,8 @@ declare(strict_types=1);
         // manage OAUTH2 login
         // in this case we need to redirect in order to load oauth2 login page
         if (oauth2 === true) {
+            beginLoginAttempt();
+            loginNavigationPending = true;
             document.location.href="includes/core/login.oauth2.php";
             return false;
         }
@@ -938,32 +1038,31 @@ declare(strict_types=1);
             }
         }
 
-        // If MFA panel is already shown (user is providing 2FA code), or Duo callback
-        if (mfaStepPending === true || isDuo === true) {
-            if (isDuo !== true) {
-                toastr.remove();
-                toastr.info(
-                    '<?php echo $lang->get('in_progress'); ?><i class="fas fa-circle-notch fa-spin fa-2x ml-3"></i>',
-                    '', {
-                        positionClass: "toast-top-center"
-                    }
-                );
-            }
-            mfaStepPending = false;
-            buildMfaDataAndIdentify(isDuo, redirect, psk, cachedMfaData);
-            return;
+        beginLoginAttempt();
+        if (isDuo !== true) {
+            toastr.remove();
+            toastr.info(
+                '<?php echo $lang->get('in_progress'); ?><i class="fas fa-circle-notch fa-spin fa-2x ml-3"></i>',
+                '', {
+                    positionClass: "toast-top-center"
+                }
+            );
         }
 
-        // First step: submit the primary credentials. The server now requests
-        // MFA only after the password/LDAP/OAuth2 factor has been validated.
-        toastr.remove();
-        toastr.info(
-            '<?php echo $lang->get('in_progress'); ?><i class="fas fa-circle-notch fa-spin fa-2x ml-3"></i>',
-            '', {
-                positionClass: "toast-top-center"
+        // A focus-triggered key renewal may already be running. Wait for it before
+        // encrypting credentials; its late response must not race this submission.
+        return $.when(sessionKeyCheckRequest).then(function() {
+            if (loginNavigationPending === true) {
+                return;
             }
-        );
-        buildMfaDataAndIdentify(isDuo, redirect, psk, cachedMfaData);
+
+            // The server requests MFA only after validating the primary factor.
+            mfaStepPending = false;
+            return buildMfaDataAndIdentify(isDuo, redirect, psk, cachedMfaData);
+        }).then(finishLoginAttempt, function() {
+            finishLoginAttempt();
+            showLoginRequestError();
+        });
     }
 
     /**
@@ -973,6 +1072,7 @@ declare(strict_types=1);
      * @param {string} redirect
      * @param {string} psk
      * @param {object|null} availableMfaMethods - MFA methods returned after primary auth
+     * @returns {object|boolean} Authentication promise, or false for missing MFA input.
      */
     function buildMfaDataAndIdentify(isDuo, redirect, psk, availableMfaMethods) {
         // Keep the OAuth2 context before clearing the store: it is cleared here but
@@ -1067,10 +1167,19 @@ declare(strict_types=1);
             console.log({...mfaData, ...oauth2Info});
         }
 
-        identifyUser(redirect, psk, mfaData, randomstring, oauth2Info);
+        return identifyUser(redirect, psk, mfaData, randomstring, oauth2Info);
     }
 
-    //Identify user
+    /**
+     * Submit the captured credentials and return the complete session-key retry chain.
+     *
+     * @param {string} redirect Requested destination after authentication.
+     * @param {string} psk Personal salt key, when supplied.
+     * @param {object} data Credentials and MFA data for this attempt.
+     * @param {string} randomstring Nonce expected in the successful response.
+     * @param {object} oauth2Info OAuth2 callback context, when present.
+     * @returns {object} Authentication response promise.
+     */
     function identifyUser(redirect, psk, data, randomstring, oauth2Info) {
         // Base64 encode sensitive data
         const sharedData = {
@@ -1082,14 +1191,14 @@ declare(strict_types=1);
         // Captured here because the answer handler shadows `data` with its own
         // decoded payload, making the arguments unreachable from inside it.
         const replayIdentify = function() {
-            identifyUser(redirect, psk, data, randomstring, oauth2Info);
+            return identifyUser(redirect, psk, data, randomstring, oauth2Info);
         };
 
         //send query
-        $.post(
+        return $.post(
             "sources/identify.php", {
                 type: "identify_user",
-                login: $('#login').val(),
+                login: sharedData.login,
                 data: prepareExchangedData(
                     JSON.stringify(sharedData),
                     'encode',
@@ -1098,7 +1207,8 @@ declare(strict_types=1);
                 xhrFields: {
                     withCredentials: true
                 },
-            },
+            }
+        ).then(
             function(receivedData) {
                 // The page has been open longer than the server-side session:
                 // its encryption key is gone and the credentials could not be
@@ -1106,8 +1216,7 @@ declare(strict_types=1);
                 // rather than showing a "session expired" warning to a user who
                 // is precisely trying to open a session.
                 if (isStaleSessionKeyAnswer(receivedData) === true) {
-                    recoverFromStaleSessionKey(replayIdentify);
-                    return false;
+                    return recoverFromStaleSessionKey(replayIdentify);
                 }
 
                 // The answer is exploitable: allow a future recovery again.
@@ -1135,6 +1244,7 @@ declare(strict_types=1);
                                 teampassUser.page_reload = 1;
                             }
                         );
+                        loginNavigationPending = true;
                         document.location.reload(true);
                         return false;
                     }
@@ -1306,6 +1416,7 @@ declare(strict_types=1);
                         }
                     );
                 } else if(data.error === false && data.duo_url_ready === true) {
+                    loginNavigationPending = true;
                     toastr.remove();
                     toastr.info(
                         '<?php echo $lang->get('duo_redirect_uri'); ?><i class="fas fa-circle-notch fa-spin fa-2x ml-3"></i>',
@@ -1345,6 +1456,7 @@ declare(strict_types=1);
                     );
 
                     //redirection for admin is specific
+                    loginNavigationPending = true;
                     if (parseInt(data.user_admin) === 1) {
                         window.location.href = './index.php?page=admin';
                     } else if (data.initial_url !== '' && data.initial_url !== null) {
@@ -1353,8 +1465,6 @@ declare(strict_types=1);
                         window.location.href = './index.php?page=items';
                     }
                 }
-
-                $('#but_login_with_oauth2, #but_identify_user').prop('disabled', false);
 
                 // Clear Yubico
                 if ($("#yubico_key").length > 0) {
@@ -1543,6 +1653,9 @@ declare(strict_types=1);
             $('.radiosforbuttons-2fa_selector_select')
                 .off('click')
                 .click(function() {
+                    if (loginInProgress === true || loginNavigationPending === true) {
+                        return;
+                    }
                     $('.div-2fa-method').addClass('hidden');
 
                     // Read data-mfa from the corresponding radio input (by index) to get the

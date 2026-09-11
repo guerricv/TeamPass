@@ -99,6 +99,20 @@ jobs:
       - name: Run the test suite
         run: php app/vendor/phpunit/phpunit/phpunit --colors=never
 
+  javascript-tests:
+    name: Login JavaScript tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run login submission regression tests
+        run: node --test tests/JavaScript/login-submission.test.cjs
+
   static-analysis:
     name: PHPStan (level 4)
     runs-on: ubuntu-latest
