@@ -94,6 +94,82 @@ class ItemController extends BaseController
 
 
     /**
+     * Read and validate the optional Idempotency-Key request header.
+     *
+     * @param symfonyRequest $request Current request
+     * @return string|null Validated key, null when the header is absent
+     */
+    private function getIdempotencyKey(symfonyRequest $request): ?string
+    {
+        if ($request->headers->has('Idempotency-Key') === false) {
+            return null;
+        }
+
+        return ApiIdempotencyModel::validateKey((string) $request->headers->get('Idempotency-Key', ''));
+    }
+
+
+    /**
+     * Build the complete functional create intent used for request fingerprinting.
+     *
+     * @param array<string, mixed> $params Normalized item parameters
+     * @return array<string, mixed>
+     */
+    private function createIdempotencyIntent(array $params): array
+    {
+        return [
+            'folder_id' => (int) $params['folder_id'],
+            'label' => (string) $params['label'],
+            'login' => (string) $params['login'],
+            'password' => (string) $params['password'],
+            'email' => (string) $params['email'],
+            'url' => (string) $params['url'],
+            'description' => (string) $params['description'],
+            'tags' => (string) $params['tags'],
+            'totp' => (string) $params['totp'],
+            'totp_algorithm' => (string) $params['totp_algorithm'],
+            'totp_digits' => (int) $params['totp_digits'],
+            'totp_period' => (int) $params['totp_period'],
+            'fields' => $params['fields'],
+            'icon' => (string) $params['icon'],
+            'anyone_can_modify' => (int) $params['anyone_can_modify'],
+        ];
+    }
+
+
+    /**
+     * Parse the optional unsigned 32-bit item revision query parameter.
+     *
+     * @param array<string, mixed> $params Request parameters
+     * @return int|null Parsed revision, null when omitted
+     */
+    private function parseOptionalRevision(array $params): ?int
+    {
+        if (array_key_exists('revision', $params) === false || $params['revision'] === '') {
+            return null;
+        }
+
+        $rawRevision = $params['revision'];
+        if (is_int($rawRevision)) {
+            $revision = $rawRevision;
+        } elseif (is_string($rawRevision) && preg_match('/^(0|[1-9][0-9]*)$/D', $rawRevision) === 1) {
+            if (strlen($rawRevision) > 10) {
+                throw new InvalidArgumentException('Revision must be an unsigned 32-bit integer.');
+            }
+            $revision = (int) $rawRevision;
+        } else {
+            throw new InvalidArgumentException('Revision must be an unsigned 32-bit integer.');
+        }
+
+        if ($revision < 0 || $revision > 4294967295) {
+            throw new InvalidArgumentException('Revision must be an unsigned 32-bit integer.');
+        }
+
+        return $revision;
+    }
+
+
+    /**
      * Manage case inFolder - get items inside an array of folders
      *
      * @param array $userData
@@ -169,7 +245,7 @@ class ItemController extends BaseController
                     $arrItems = $itemModel->getItems($sqlExtra, $intLimit, $userPrivateKey, $userData['id'], false, $intOffset);
                     // Empty collection → 200 + [] (a 204 must not carry a body — RFC 9110)
                     $responseData = json_encode($arrItems);
-                    $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra);
+                    $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra, [], (int) $userData['id']);
                 }
             } catch (Error $e) {
                 error_log('ItemController::inFoldersAction error: ' . $e->getMessage());
@@ -254,6 +330,8 @@ class ItemController extends BaseController
         $arrErrorHeaders = [];
         $arrSuccessHeaders = [];
         $intSuccessStatus = 200;
+        $idempotencyModel = null;
+        $idempotencyReservation = null;
 
         if (strtoupper($requestMethod) === 'POST') {
             // Is user allowed to create a folder
@@ -274,8 +352,16 @@ class ItemController extends BaseController
                 // get parameters
                 $arrQueryStringParams = $this->getQueryStringParams();
 
+                try {
+                    $idempotencyKey = $this->getIdempotencyKey($request);
+                } catch (InvalidArgumentException $exception) {
+                    $idempotencyKey = null;
+                    $strErrorDesc = $exception->getMessage();
+                    $strErrorHeader = 'HTTP/1.1 400 Bad Request';
+                }
+
                 // Check that the parameters are indeed an array before using them
-                if (is_array($arrQueryStringParams)) {
+                if (empty($strErrorDesc) === true && is_array($arrQueryStringParams)) {
                     // check parameters
                     $arrCheck = $this->checkNewItemData($arrQueryStringParams, $userData);
 
@@ -304,26 +390,72 @@ class ItemController extends BaseController
                             'fields' => $this->normalizeFields($arrQueryStringParams['fields'] ?? []),
                         ];
 
-                        // launch
-                        $itemModel = new ItemModel();
-                        $ret = $itemModel->addItem(
-                            $arrItemParams
-                        );
-                        if (($ret['error'] ?? false) === true) {
-                            $strErrorDesc = (string) ($ret['error_message'] ?? 'Item creation failed');
-                            $strErrorHeader = (string) ($ret['error_header'] ?? 'HTTP/1.1 422 Unprocessable Entity');
-                        } else {
-                            // 201 Created + Location of the new resource (path-absolute reference)
-                            $responseData = json_encode($ret);
-                            $intSuccessStatus = 201;
-                            $requestPath = (string) parse_url($request->getRequestUri(), PHP_URL_PATH);
-                            $arrSuccessHeaders[] = 'Location: '
-                                . preg_replace('/create$/', 'get', $requestPath)
-                                . '?id=' . (int) $ret['newId'];
+                        if ($idempotencyKey !== null) {
+                            try {
+                                $idempotencyModel = new ApiIdempotencyModel();
+                                $decision = $idempotencyModel->reserve(
+                                    (int) $userData['id'],
+                                    ApiIdempotencyModel::OPERATION_ITEM_CREATE,
+                                    $idempotencyKey,
+                                    $this->createIdempotencyIntent($arrItemParams)
+                                );
+
+                                if ($decision['state'] === 'replay') {
+                                    $responseData = json_encode($decision['response']);
+                                    $intSuccessStatus = (int) $decision['http_status'];
+                                    $arrSuccessHeaders[] = 'Idempotency-Replayed: true';
+                                    $requestPath = (string) parse_url($request->getRequestUri(), PHP_URL_PATH);
+                                    $arrSuccessHeaders[] = 'Location: '
+                                        . preg_replace('/create$/', 'get', $requestPath)
+                                        . '?id=' . (int) $decision['resource_id'];
+                                } elseif ($decision['state'] === 'conflict') {
+                                    $strErrorDesc = 'Idempotency-Key was already used with a different request.';
+                                    $strErrorHeader = 'HTTP/1.1 409 Conflict';
+                                } elseif ($decision['state'] === 'processing') {
+                                    $strErrorDesc = 'A request with this Idempotency-Key is still processing.';
+                                    $strErrorHeader = 'HTTP/1.1 409 Conflict';
+                                    $arrErrorHeaders[] = 'Retry-After: ' . (int) ($decision['retry_after'] ?? 1);
+                                } else {
+                                    $idempotencyReservation = $decision;
+                                }
+                            } catch (Throwable $exception) {
+                                error_log('[API] Unable to reserve item.create idempotency: ' . $exception->getMessage());
+                                $strErrorDesc = 'An internal error occurred while preparing the item creation.';
+                                $strErrorHeader = 'HTTP/1.1 500 Internal Server Error';
+                            }
+                        }
+
+                        if (empty($strErrorDesc) === true && $responseData === '') {
+                            // launch
+                            $itemModel = new ItemModel();
+                            $ret = $itemModel->addItem(
+                                $arrItemParams,
+                                $idempotencyModel,
+                                $idempotencyReservation
+                            );
+                            if (($ret['error'] ?? false) === true) {
+                                if ($idempotencyModel !== null && $idempotencyReservation !== null) {
+                                    try {
+                                        $idempotencyModel->releaseReservation($idempotencyReservation);
+                                    } catch (Throwable $exception) {
+                                        error_log('[API] Unable to release failed item.create idempotency: ' . $exception->getMessage());
+                                    }
+                                }
+                                $strErrorDesc = (string) ($ret['error_message'] ?? 'Item creation failed');
+                                $strErrorHeader = (string) ($ret['error_header'] ?? 'HTTP/1.1 422 Unprocessable Entity');
+                            } else {
+                                // 201 Created + Location of the new resource (path-absolute reference)
+                                $responseData = json_encode($ret);
+                                $intSuccessStatus = 201;
+                                $requestPath = (string) parse_url($request->getRequestUri(), PHP_URL_PATH);
+                                $arrSuccessHeaders[] = 'Location: '
+                                    . preg_replace('/create$/', 'get', $requestPath)
+                                    . '?id=' . (int) $ret['newId'];
+                            }
                         }
                     }
 
-                } else {
+                } elseif (empty($strErrorDesc) === true) {
                     $strErrorDesc = 'Data not consistent';
                     $strErrorHeader = 'HTTP/1.1 400 Bad Request';
                 }
@@ -438,7 +570,7 @@ class ItemController extends BaseController
                     $responseData = json_encode($arrItems);
                     // Pagination contract only applies to searches (a get-by-id is a single resource)
                     if ($showItem === false) {
-                        $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra, $sqlParams);
+                        $arrSuccessHeaders[] = 'X-Total-Count: ' . $itemModel->countItems($sqlExtra, $sqlParams, (int) $userData['id']);
                     }
                 }
             } catch (Error $e) {
@@ -576,6 +708,11 @@ class ItemController extends BaseController
                 $itemVisibilitySql .= ' OR i.id IN (' . $safeRestricted . ')';
             }
             $itemVisibilitySql .= ')' . $folderAccessModel->getItemFolderSqlConstraint('i.id_tree', (int) $userData['id']);
+            // An item the caller has been restricted from is no longer visible to them. Applying
+            // the predicate to the visibility clause — not only to the payload — is what makes the
+            // delta report it as removed/out_of_scope, so an offline client drops its cached copy
+            // instead of keeping a secret the server has stopped serving.
+            $itemVisibilitySql .= $folderAccessModel->getItemRestrictionSqlConstraint('i', (int) $userData['id']);
 
             $changes = $itemModel->getItemChanges(
                 $since,
@@ -648,6 +785,9 @@ class ItemController extends BaseController
                 $sql_constraint .= ' OR i.id IN (' . $safeRestrictedFbu . ')';
             }
             $sql_constraint .= ')' . $folderAccessModel->getItemFolderSqlConstraint('i.id_tree', (int) $userData['id']);
+            // This endpoint builds its own query instead of going through getItems(), so the
+            // item-level restriction has to be applied here too.
+            $sql_constraint .= $folderAccessModel->getItemRestrictionSqlConstraint('i', (int) $userData['id']);
 
             // Decode URL and escape LIKE metacharacters to prevent wildcard injection
             $searchUrl = urldecode($arrQueryStringParams['url']);
@@ -791,6 +931,11 @@ class ItemController extends BaseController
                     if (!$hasAccess) {
                         $strErrorDesc = 'Access denied to this item';
                         $strErrorHeader = 'HTTP/1.1 403 Forbidden';
+                    } elseif ($folderAccessModel->satisfiesItemRestriction($itemId, (int) $userData['id']) === false) {
+                        // The item was narrowed to a subset of users/roles the caller is not in.
+                        // Same denial the web applies before releasing a TOTP code.
+                        $strErrorDesc = 'Access denied to this item';
+                        $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                     } else {
                         // Load OTP data
                         $otpData = DB::queryFirstRow(
@@ -886,8 +1031,29 @@ class ItemController extends BaseController
 
         if (strtoupper($requestMethod) === 'GET') {
             try {
+                // Tags are item metadata and inherit the item's authorization: the endpoint is
+                // documented as returning the tags accessible to the caller, but it used to
+                // SELECT DISTINCT over the whole table and disclosed the tags of every folder in
+                // the instance. Scope it exactly like the item reads — accessible folders, no
+                // foreign personal tree, and the item-level restriction.
+                // The legacy 'restricted_items_list' claim is deliberately not honoured here: it
+                // is an additive grant that AuthModel has kept empty since the folders list moved
+                // to the writableFolders endpoint, so it would only add dead SQL.
+                $folderAccessModel = new FolderAccessModel();
+                $safeFolders = implode(
+                    ',',
+                    $folderAccessModel->normalizeFolderIds($userData['folders_list'] ?? '')
+                ) ?: '0';
+
                 $rows = DB::query(
-                    'SELECT DISTINCT tag FROM ' . prefixTable('tags') . ' ORDER BY tag ASC'
+                    'SELECT DISTINCT t.tag
+                    FROM ' . prefixTable('tags') . ' AS t
+                    INNER JOIN ' . prefixTable('items') . ' AS i ON (i.id = t.item_id)
+                    WHERE i.deleted_at IS NULL
+                    AND i.id_tree IN (' . $safeFolders . ')'
+                    . $folderAccessModel->getItemFolderSqlConstraint('i.id_tree', (int) $userData['id'])
+                    . $folderAccessModel->getItemRestrictionSqlConstraint('i', (int) $userData['id'])
+                    . ' ORDER BY t.tag ASC'
                 );
 
                 $tags = array_column($rows, 'tag');
@@ -975,6 +1141,14 @@ class ItemController extends BaseController
                                 );
 
                                 if (!$hasAccess) {
+                                    $strErrorDesc = 'Access denied to this item';
+                                    $strErrorHeader = 'HTTP/1.1 403 Forbidden';
+                                } elseif ($folderAccessModel->satisfiesItemRestriction($itemId, (int) $userData['id']) === false) {
+                                    // Narrowed to a subset of users/roles the caller is not in.
+                                    // The web refuses the whole update_item handler in that case;
+                                    // without this the API let an excluded user overwrite the
+                                    // secret, and the sharekey fan-out then handed them the new
+                                    // value (GHSA-gxc6-rgv6-wx99).
                                     $strErrorDesc = 'Access denied to this item';
                                     $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                                 } elseif ($folderAccessModel->canEditInFolder((int) $itemInfo['id_tree'], (int) $userData['id']) === false) {
@@ -1083,6 +1257,10 @@ class ItemController extends BaseController
         $request = symfonyRequest::createFromGlobals();
         $requestMethod = $request->getMethod();
         $strErrorDesc = $strErrorHeader = $responseData = '';
+        $arrErrorHeaders = [];
+        $arrSuccessHeaders = [];
+        $idempotencyModel = null;
+        $idempotencyReservation = null;
 
         if (strtoupper($requestMethod) === 'DELETE') {
             // Check if user is allowed to delete items
@@ -1092,16 +1270,28 @@ class ItemController extends BaseController
             } else {
                 // Get parameters
                 $arrQueryStringParams = $this->getQueryStringParams();
-                
+
                 // Check that the parameters are indeed an array before using them
                 if (is_array($arrQueryStringParams)) {
+                    try {
+                        $idempotencyKey = $this->getIdempotencyKey($request);
+                        $expectedRevision = $this->parseOptionalRevision($arrQueryStringParams);
+                    } catch (InvalidArgumentException $exception) {
+                        $idempotencyKey = null;
+                        $expectedRevision = null;
+                        $strErrorDesc = $exception->getMessage();
+                        $strErrorHeader = 'HTTP/1.1 400 Bad Request';
+                    }
+
                     // Check if item ID is provided
-                    if (!isset($arrQueryStringParams['id']) || empty($arrQueryStringParams['id'])) {
+                    if (empty($strErrorDesc) === true
+                        && (!isset($arrQueryStringParams['id']) || empty($arrQueryStringParams['id']))
+                    ) {
                         $strErrorDesc = 'Item ID is mandatory';
                         $strErrorHeader = 'HTTP/1.1 400 Bad Request';
-                    } else {
+                    } elseif (empty($strErrorDesc) === true) {
                         $itemId = (int) $arrQueryStringParams['id'];
-                        
+
                         try {
                             // Load item info to check access rights
                             $itemInfo = DB::queryFirstRow(
@@ -1123,27 +1313,78 @@ class ItemController extends BaseController
                                 if (!$hasAccess) {
                                     $strErrorDesc = 'Access denied to this item';
                                     $strErrorHeader = 'HTTP/1.1 403 Forbidden';
+                                } elseif ($folderAccessModel->satisfiesItemRestriction($itemId, (int) $userData['id']) === false) {
+                                    // Same denial the web applies through getCurrentAccessRights().
+                                    // Checked before the idempotency reservation, so a refused
+                                    // delete never consumes the caller's key.
+                                    $strErrorDesc = 'Access denied to this item';
+                                    $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                                 } elseif ($folderAccessModel->canDeleteInFolder((int) $itemInfo['id_tree'], (int) $userData['id']) === false) {
                                     // Blocks R (read-only) as well as ND / NDNE (no delete)
                                     $strErrorDesc = 'Access denied: you are not allowed to delete items in this folder';
                                     $strErrorHeader = 'HTTP/1.1 403 Forbidden';
                                 } else {
-                                    // delete the item
-                                    $itemModel = new ItemModel();
-                                    $ret = $itemModel->deleteItem(
-                                        $itemId,
-                                        $userData
-                                    );
+                                    if ($idempotencyKey !== null) {
+                                        try {
+                                            $idempotencyModel = new ApiIdempotencyModel();
+                                            $decision = $idempotencyModel->reserve(
+                                                (int) $userData['id'],
+                                                ApiIdempotencyModel::OPERATION_ITEM_DELETE,
+                                                $idempotencyKey,
+                                                [
+                                                    'item_id' => $itemId,
+                                                    'revision' => $expectedRevision,
+                                                ]
+                                            );
 
-                                    if ($ret['error'] === true) {
-                                        $strErrorDesc = $ret['error_message'];
-                                        $strErrorHeader = $ret['error_header'];
-                                    } else {
-                                        $responseData = json_encode($ret);
+                                            if ($decision['state'] === 'replay') {
+                                                $responseData = json_encode($decision['response']);
+                                                $arrSuccessHeaders[] = 'Idempotency-Replayed: true';
+                                            } elseif ($decision['state'] === 'conflict') {
+                                                $strErrorDesc = 'Idempotency-Key was already used with a different request.';
+                                                $strErrorHeader = 'HTTP/1.1 409 Conflict';
+                                            } elseif ($decision['state'] === 'processing') {
+                                                $strErrorDesc = 'A request with this Idempotency-Key is still processing.';
+                                                $strErrorHeader = 'HTTP/1.1 409 Conflict';
+                                                $arrErrorHeaders[] = 'Retry-After: ' . (int) ($decision['retry_after'] ?? 1);
+                                            } else {
+                                                $idempotencyReservation = $decision;
+                                            }
+                                        } catch (Throwable $exception) {
+                                            error_log('[API] Unable to reserve item.delete idempotency: ' . $exception->getMessage());
+                                            $strErrorDesc = 'An internal error occurred while preparing the item deletion.';
+                                            $strErrorHeader = 'HTTP/1.1 500 Internal Server Error';
+                                        }
+                                    }
+
+                                    if (empty($strErrorDesc) === true && $responseData === '') {
+                                        // delete the item
+                                        $itemModel = new ItemModel();
+                                        $ret = $itemModel->deleteItem(
+                                            $itemId,
+                                            $userData,
+                                            $expectedRevision,
+                                            $idempotencyModel,
+                                            $idempotencyReservation
+                                        );
+
+                                        if ($ret['error'] === true) {
+                                            if ($idempotencyModel !== null && $idempotencyReservation !== null) {
+                                                try {
+                                                    $idempotencyModel->releaseReservation($idempotencyReservation);
+                                                } catch (Throwable $exception) {
+                                                    error_log('[API] Unable to release failed item.delete idempotency: ' . $exception->getMessage());
+                                                }
+                                            }
+                                            $strErrorDesc = $ret['error_message'];
+                                            $strErrorHeader = $ret['error_header'];
+                                        } else {
+                                            $responseData = json_encode($ret);
+                                        }
                                     }
                                 }
                             }
-                        } catch (Error $e) {
+                        } catch (Throwable $e) {
                             error_log('[API] ItemController error: ' . $e->getMessage());
                             $strErrorDesc = 'An internal error occurred. Please contact support.';
                             $strErrorHeader = 'HTTP/1.1 500 Internal Server Error';
@@ -1164,10 +1405,10 @@ class ItemController extends BaseController
         if (empty($strErrorDesc) === true) {
             $this->sendOutput(
                 $responseData,
-                ['Content-Type: application/json', 'HTTP/1.1 200 OK']
+                array_merge(['Content-Type: application/json', 'HTTP/1.1 200 OK'], $arrSuccessHeaders)
             );
         } else {
-            $this->sendProblemFromHeader($strErrorHeader, $strErrorDesc, $arrErrorHeaders ?? []);
+            $this->sendProblemFromHeader($strErrorHeader, $strErrorDesc, $arrErrorHeaders);
         }
     }
     //end deleteAction()

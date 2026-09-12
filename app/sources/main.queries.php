@@ -1975,6 +1975,8 @@ function generateBugReport(
     $config_exclude_vars = array(
         'bck_script_passkey',
         'browser_extension_key',
+        // Carries the administrator address used for the licence trial request.
+        'licence_trial_state',
         'email_smtp_server',
         'email_auth_username',
         'email_auth_pwd',

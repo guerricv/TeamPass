@@ -43,6 +43,7 @@ class NativeModalUsageTest extends TestCase
             'app/pages/kb.js.php',
             'app/pages/admin.js.php',
             'app/pages/tools.js.php',
+            'app/pages/api.js.php',
         ) as $relativePath) {
             self::assertDoesNotMatchRegularExpression(
                 $nativeDialogPattern,
@@ -62,10 +63,15 @@ class NativeModalUsageTest extends TestCase
         $profile = $this->readRepositoryFile('app/pages/profile.js.php');
         $knowledgeBase = $this->readRepositoryFile('app/pages/kb.js.php');
         $tools = $this->readRepositoryFile('app/pages/tools.js.php');
+        $api = $this->readRepositoryFile('app/pages/api.js.php');
 
         self::assertGreaterThanOrEqual(3, substr_count($profile, 'launchConfirmDialog('));
         self::assertGreaterThanOrEqual(3, substr_count($knowledgeBase, 'launchConfirmDialog('));
         self::assertGreaterThanOrEqual(1, substr_count($tools, 'launchConfirmDialog('));
+
+        // Requesting a trial is irreversible - one per FQDN and product, forever - so it must
+        // go through the TeamPass confirmation modal, never a native dialog.
+        self::assertGreaterThanOrEqual(1, substr_count($api, 'launchConfirmDialog('));
     }
 
     /**

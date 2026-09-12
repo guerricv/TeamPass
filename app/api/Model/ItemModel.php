@@ -94,6 +94,15 @@ class ItemModel
         $SETTINGS = $configManager->getAllSettings();
         $itemExtraFields = isset($SETTINGS['item_extra_fields']) && (int) $SETTINGS['item_extra_fields'] === 1;
 
+        // Item-level restriction (items.restricted_to / restriction_to_roles). Applied here
+        // rather than in each controller because every API read path funnels through this
+        // method: item/get, item/inFolders and item/changes. Neither folder membership nor the
+        // presence of a sharekey expresses the restriction — restricting an item leaves the
+        // excluded user's sharekey in place — so without this the API returned the plaintext
+        // password of an item the web refused to open (GHSA-gxc6-rgv6-wx99).
+        $folderAccessModel = new FolderAccessModel();
+        $itemRestrictionSql = $folderAccessModel->getItemRestrictionSqlConstraint('i', $userId);
+
         // Get items
         $rows = DB::query(
             "SELECT i.id, i.label, i.description, i.pw, i.pw_iv, i.url, i.id_tree, i.login, i.email,
@@ -110,7 +119,7 @@ class ItemModel
             FROM " . prefixTable('items') . " AS i
             LEFT JOIN " . prefixTable('nested_tree') . " AS t ON (t.id = i.id_tree)
             LEFT JOIN " . prefixTable('items_otp') . " AS io ON (io.item_id = i.id)".
-            $sqlExtra .
+            $sqlExtra . $itemRestrictionSql .
             " ORDER BY i.id ASC" .
             ($limit > 0 ? " LIMIT " . ($offset > 0 ? $offset . ", " : "") . $limit : ''),
             ...$sqlParams
@@ -246,13 +255,22 @@ class ItemModel
      * @param string $sqlExtra WHERE clause referencing the 'i' items alias only,
      *                         may contain MeekroDB placeholders (%s, ...)
      * @param array $sqlParams Values bound to the placeholders in $sqlExtra, in order
+     * @param int|null $userId Current user; when given, the same item-level restriction
+     *                         predicate getItems() applies is counted too, so the total
+     *                         cannot advertise items the caller is restricted from
      *
      * @return int
      */
-    public function countItems(string $sqlExtra, array $sqlParams = []): int
+    public function countItems(string $sqlExtra, array $sqlParams = [], ?int $userId = null): int
     {
+        $itemRestrictionSql = '';
+        if ($userId !== null) {
+            $folderAccessModel = new FolderAccessModel();
+            $itemRestrictionSql = $folderAccessModel->getItemRestrictionSqlConstraint('i', $userId);
+        }
+
         return (int) DB::queryFirstField(
-            'SELECT COUNT(*) FROM ' . prefixTable('items') . ' AS i ' . $sqlExtra,
+            'SELECT COUNT(*) FROM ' . prefixTable('items') . ' AS i ' . $sqlExtra . $itemRestrictionSql,
             ...$sqlParams
         );
     }
@@ -453,11 +471,19 @@ class ItemModel
      * Main function to add a new item to the database.
      * It handles data preparation, validation, password checks, folder settings,
      * item creation, and post-insertion tasks (like logging, sharing, and tagging).
+     *
+     * @param array<string, mixed> $arrItemParams Item fields and authenticated user context
+     * @param ApiIdempotencyModel|null $idempotencyModel Persistent idempotency coordinator
+     * @param array<string, mixed>|null $idempotencyReservation Acquired reservation
+     * @return array<string, mixed> Success or error response
      */
     public function addItem(
-        array $arrItemParams
+        array $arrItemParams,
+        ?ApiIdempotencyModel $idempotencyModel = null,
+        ?array $idempotencyReservation = null
     ) : array
     {
+        $transactionStarted = false;
         try {
             include_once API_ROOT_PATH . '/../sources/main.functions.php';
 
@@ -504,7 +530,7 @@ class ItemModel
 
             // Step 5: Ensure the password meets folder complexity requirements
             // Capture the score to reuse it — avoids running zxcvbn a second time on the ciphertext
-            $complexityLevel = $this->checkPasswordComplexity($password, array_merge($itemInfos, ['folderId' => $folderId]));
+            $complexityLevel = $this->checkPasswordComplexity($password, array_merge($itemInfos, ['folderId' => $folderId]), isUpdate: false);
 
             // Step 6: Check for duplicates in the system
             $this->checkForDuplicates($label, $SETTINGS, $itemInfos);
@@ -522,25 +548,51 @@ class ItemModel
                 $data['favicon_url'] = $this->getFaviconUrl($data['url']);
             }
 
+            // Keep the complete persistent mutation atomic, including the replay result. External
+            // favicon resolution and all validation deliberately happened before this transaction.
+            DB::startTransaction();
+            $transactionStarted = true;
+            if ($idempotencyModel !== null && $idempotencyReservation !== null) {
+                $idempotencyModel->lockReservation($idempotencyReservation);
+            }
+
             // Step 8: Insert the new item into the database
-            $newID = $this->insertNewItem($data, $password, $itemInfos, $complexityLevel, $passwordIv);
+            $newID = $this->insertNewItem(
+                $data,
+                $password,
+                $itemInfos,
+                $complexityLevel,
+                $passwordIv,
+                $idempotencyReservation === null ? null : (int) $idempotencyReservation['id']
+            );
 
             // Step 9: Handle post-insert tasks (logging, sharing, tagging, custom fields)
-            $this->handlePostInsertTasks($newID, $itemInfos, $folderId, $passwordKey, $userId, $username, $tags, $fields, $data, $SETTINGS);
+            $fieldsForTasks = $this->handlePostInsertTasks(
+                $newID,
+                $itemInfos,
+                $folderId,
+                $passwordKey,
+                $userId,
+                $username,
+                $tags,
+                $fields,
+                $data,
+                $SETTINGS,
+                false
+            );
 
             updateCacheTable('add_value', $newID, $userId);
 
             // Notify WebSocket subscribers so other users viewing this folder see the new item
             emitItemEvent('created', $newID, $folderId, $label, $username, $userId);
 
-            // Refresh the caller's security posture so a reused/weak password is flagged without
-            // waiting for a manual dashboard scan (no-op when the dashboard is disabled).
-            refreshItemHealthAfterSave((int) $newID, $userId, (string) $plaintextPasswordForHealth, $SETTINGS);
-
             $revisionMetadata = getItemRevisionMetadata((int) $newID);
+            if ($revisionMetadata['revision'] <= 0 || $revisionMetadata['revision_changed_at'] === null) {
+                throw new RuntimeException('The item creation revision could not be persisted.');
+            }
 
             // Success response
-            return [
+            $response = [
                 'error' => false,
                 'message' => 'Item added successfully',
                 'newId' => $newID,
@@ -548,12 +600,51 @@ class ItemModel
                 'revision_changed_at' => $revisionMetadata['revision_changed_at'],
             ];
 
-        } catch (Exception $e) {
-            // Error response
+            if ($idempotencyModel !== null && $idempotencyReservation !== null) {
+                $idempotencyModel->completeReservation($idempotencyReservation, $newID, 201, $response);
+            }
+
+            DB::commit();
+            $transactionStarted = false;
+
+            // The detached handler uses another database connection, so enqueue and launch it
+            // only after the item and its idempotency replay result are visible.
+            if ((int) $itemInfos['personal_folder'] === 0) {
+                storeTask('new_item', $userId, 0, $folderId, $newID, $passwordKey, $fieldsForTasks, []);
+            }
+
+            // Cache refreshes and external side effects stay outside the SQL transaction. An
+            // idempotent replay returns before the model and therefore never repeats them.
+            refreshItemHealthAfterSave((int) $newID, $userId, (string) $plaintextPasswordForHealth, $SETTINGS);
+            emitItemSyslog($SETTINGS, $newID, $label, 'at_creation', $username);
+
+            return $response;
+        } catch (Throwable $e) {
+            if ($transactionStarted === true) {
+                DB::rollback();
+                resetItemRevisionMemo();
+            }
+
+            if ($e instanceof InvalidArgumentException || $e instanceof UnexpectedValueException) {
+                return [
+                    'error' => true,
+                    'error_header' => 'HTTP/1.1 422 Unprocessable Entity',
+                    'error_message' => $e->getMessage(),
+                ];
+            }
+
+            error_log(
+                '[API] ItemModel::addItem failed for user '
+                . (int) ($arrItemParams['id'] ?? 0)
+                . ' [' . get_class($e) . ':' . (int) $e->getCode() . ']'
+                . ' ' . $e->getMessage()
+                . ' in ' . $e->getFile() . ':' . $e->getLine()
+            );
+
             return [
                 'error' => true,
-                'error_header' => 'HTTP/1.1 422 Unprocessable Entity',
-                'error_message' => $e->getMessage(),
+                'error_header' => 'HTTP/1.1 500 Internal Server Error',
+                'error_message' => 'An internal error occurred while creating the item.',
             ];
         }
     }
@@ -696,11 +787,11 @@ class ItemModel
     private function validatePassword(string $password, array $SETTINGS) : void
     {
         if ($this->isPasswordEmptyAllowed($password, $SETTINGS['create_item_without_password'])) {
-            throw new Exception('Empty password is not allowed');
+            throw new InvalidArgumentException('Empty password is not allowed');
         }
 
         if (strlen($password) > $SETTINGS['pwd_maximum_length']) {
-            throw new Exception('Password is too long (max allowed is ' . $SETTINGS['pwd_maximum_length'] . ' characters)');
+            throw new InvalidArgumentException('Password is too long (max allowed is ' . $SETTINGS['pwd_maximum_length'] . ' characters)');
         }
     }
 
@@ -855,14 +946,15 @@ class ItemModel
      * Returns the computed complexity level so the caller can reuse it without a second zxcvbn pass.
      * @param string $password - The plaintext password to check
      * @param array $itemInfos - Folder settings including password complexity requirements
+     * @param bool $isUpdate - Use the editing exception when changing an existing password
      * @return int - The computed complexity level (one of TP_PW_STRENGTH_*)
      * @throws Exception - If the password is unassessable or its complexity is insufficient
      */
-    private function checkPasswordComplexity(string $password, array $itemInfos) : int
+    private function checkPasswordComplexity(string $password, array $itemInfos, bool $isUpdate) : int
     {
         // Check existence first
         if (isset($itemInfos['folderId']) === false) {
-            throw new Exception('Folder ID is missing');
+            throw new InvalidArgumentException('Folder ID is missing');
         }
 
         // Cast to integer for strict validation
@@ -870,7 +962,7 @@ class ItemModel
 
         // Validate value
         if ($folderId <= 0) {
-            throw new Exception('Invalid folder ID for complexity check');
+            throw new InvalidArgumentException('Invalid folder ID for complexity check');
         }
 
         $folderComplexity = DB::queryFirstRow(
@@ -891,8 +983,9 @@ class ItemModel
         }
         $passwordStrengthScore = convertPasswordStrength((int) $passwordStrength['score']);
 
-        if ($passwordStrengthScore < $requested_folder_complexity && (int) $itemInfos['no_complex_check_on_creation'] === 0) {
-            throw new Exception('Password strength is too low');
+        $bypassComplexity = (int) $itemInfos[$isUpdate ? 'no_complex_check_on_modification' : 'no_complex_check_on_creation'];
+        if ($passwordStrengthScore < $requested_folder_complexity && $bypassComplexity === 0) {
+            throw new InvalidArgumentException('Password strength is too low');
         }
 
         return $passwordStrengthScore;
@@ -919,7 +1012,7 @@ class ItemModel
 	     (isset($SETTINGS['duplicate_item']) && (int) $SETTINGS['duplicate_item'] === 0)
 	     && (int) $itemInfos['personal_folder'] === 0)
         ) {
-            throw new Exception('Similar item already exists. Duplicates are not allowed.');
+            throw new InvalidArgumentException('Similar item already exists. Duplicates are not allowed.');
         }
     }
 
@@ -946,35 +1039,48 @@ class ItemModel
      * @param array $itemInfos - Folder-specific settings
      * @param int $complexityLevel - Complexity level computed from the plaintext password by checkPasswordComplexity()
      * @param string $passwordIv - v2 metadata (pw_iv) returned by encryptPassword(); empty for legacy data
+     * @param int|null $idempotencyId Durable create reservation identifier
      * @return int - Returns the ID of the newly created item
      */
-    private function insertNewItem(array $data, string $password, array $itemInfos, int $complexityLevel, string $passwordIv = '') : int
+    private function insertNewItem(
+        array $data,
+        string $password,
+        array $itemInfos,
+        int $complexityLevel,
+        string $passwordIv = '',
+        ?int $idempotencyId = null
+    ) : int
     {
         include_once API_ROOT_PATH . '/../sources/main.functions.php';
 
+        $itemData = [
+            'label' => $data['label'],
+            'description' => $data['description'],
+            'pw' => $password,
+            'pw_iv' => $passwordIv,
+            'pw_len' => strlen($data['password']),
+            'email' => $data['email'],
+            'url' => $data['url'],
+            'id_tree' => $data['folderId'],
+            'login' => $data['login'],
+            'inactif' => 0,
+            'restricted_to' => '',
+            'perso' => $itemInfos['personal_folder'],
+            'anyone_can_modify' => $data['anyoneCanModify'],
+            'complexity_level' => $complexityLevel,
+            'encryption_type' => 'teampass_aes',
+            'fa_icon' => $data['icon'],
+            'item_key' => uniqidReal(50),
+            'created_at' => time(),
+            'favicon_url' => $data['favicon_url'],
+        ];
+        if ($idempotencyId !== null) {
+            $itemData['api_idempotency_id'] = $idempotencyId;
+        }
+
         DB::insert(
             prefixTable('items'),
-            [
-                'label' => $data['label'],
-                'description' => $data['description'],
-                'pw' => $password,
-                'pw_iv' => $passwordIv,
-                'pw_len' => strlen($data['password']),
-                'email' => $data['email'],
-                'url' => $data['url'],
-                'id_tree' => $data['folderId'],
-                'login' => $data['login'],
-                'inactif' => 0,
-                'restricted_to' => '',
-                'perso' => $itemInfos['personal_folder'],
-                'anyone_can_modify' => $data['anyoneCanModify'],
-                'complexity_level' => $complexityLevel,
-                'encryption_type' => 'teampass_aes',
-                'fa_icon' => $data['icon'],
-                'item_key' => uniqidReal(50),
-                'created_at' => time(),
-                'favicon_url' => $data['favicon_url'],
-            ]
+            $itemData
         );
 
         $newItemId = DB::insertId();
@@ -1009,8 +1115,8 @@ class ItemModel
      * Handles tasks that need to be performed after the item is inserted:
      * 1. Stores sharing keys
      * 2. Logs the item creation
-     * 3. Adds a task if the folder is not personal
-     * 4. Adds tags to the item
+     * 3. Adds tags to the item
+     * 4. Stores custom fields and returns their keys for the post-commit fan-out task
      * @param int $newID - The ID of the newly created item
      * @param array $itemInfos - Folder-specific settings
      * @param int $folderId - Folder ID of the item
@@ -1020,6 +1126,8 @@ class ItemModel
      * @param string $tags - Tags to be associated with the item
      * @param array $data - The original data used to create the item (including the label)
      * @param array $SETTINGS - System settings for logging and task creation
+     * @param bool $emitSyslog - Whether logItems() may emit the external syslog datagram
+     * @return array<int, array<string, mixed>> Field keys for the background fan-out task
      */
     private function handlePostInsertTasks(
         int $newID,
@@ -1031,8 +1139,9 @@ class ItemModel
         string $tags,
         array $fields,
         array $data,
-        array $SETTINGS
-    ) : void {
+        array $SETTINGS,
+        bool $emitSyslog = true
+    ) : array {
         // Create share keys for the creator
         storeUsersShareKey(
             'sharekeys_items',
@@ -1047,18 +1156,28 @@ class ItemModel
         );
 
         // Log the item creation
-        logItems($SETTINGS, $newID, $data['label'], $userId, 'at_creation', $username);
+        logItems(
+            $SETTINGS,
+            $newID,
+            $data['label'],
+            $userId,
+            'at_creation',
+            $username,
+            null,
+            null,
+            null,
+            null,
+            $emitSyslog,
+            true
+        );
 
         // Add tags to the item
         $this->addTags($newID, $tags);
 
-        // Store custom fields — returns the field object keys for the background task
+        // Store custom fields and return their object keys to the post-commit caller.
         $fieldsForTasks = $this->handleCustomFieldsOnCreate($newID, $folderId, $fields, $userId, $itemInfos, $SETTINGS);
 
-        // Create a task if the folder is not personal (generates pwd/fields sharekeys for the other users)
-        if ((int) $itemInfos['personal_folder'] === 0) {
-            storeTask('new_item', $userId, 0, $folderId, $newID, $passwordKey, $fieldsForTasks, []);
-        }
+        return $fieldsForTasks;
     }
 
 
@@ -1878,7 +1997,7 @@ class ItemModel
                     $itemInfos = $this->getFolderSettings((int) $folderId);
 
                     // Check password complexity — capture score to avoid re-running zxcvbn on the ciphertext
-                    $complexityLevel = $this->checkPasswordComplexity($newPassword, array_merge($itemInfos, ['folderId' => $folderId]));
+                    $complexityLevel = $this->checkPasswordComplexity($newPassword, array_merge($itemInfos, ['folderId' => $folderId]), isUpdate: true);
 
                     // Encrypt password
                     $cryptedData = $this->encryptPassword($newPassword);
@@ -2132,13 +2251,20 @@ class ItemModel
      *
      * @param int $itemId The ID of the item to delete
      * @param array $userData User data from JWT token
+     * @param int|null $expectedRevision Optional optimistic-concurrency precondition
+     * @param ApiIdempotencyModel|null $idempotencyModel Persistent idempotency coordinator
+     * @param array<string, mixed>|null $idempotencyReservation Acquired reservation
      * @return array Returns success or error response
      */
     public function deleteItem(
         int $itemId,
-        array $userData
+        array $userData,
+        ?int $expectedRevision = null,
+        ?ApiIdempotencyModel $idempotencyModel = null,
+        ?array $idempotencyReservation = null
     ): array
     {
+        $transactionStarted = false;
         try {
             include_once API_ROOT_PATH . '/../sources/main.functions.php';
             include_once API_ROOT_PATH . '/../sources/lapr.functions.php';
@@ -2147,17 +2273,55 @@ class ItemModel
             $configManager = new ConfigManager();
             $SETTINGS = $configManager->getAllSettings();
 
-            // Load current item data
+            DB::startTransaction();
+            $transactionStarted = true;
+            if ($idempotencyModel !== null && $idempotencyReservation !== null) {
+                $idempotencyModel->lockReservation($idempotencyReservation);
+            }
+
+            // Lock the item row and perform the revision check immediately before mutation.
             $currentItem = DB::queryFirstRow(
-                'SELECT * FROM ' . prefixTable('items') . ' WHERE id = %i',
+                'SELECT * FROM ' . prefixTable('items') . ' WHERE id = %i FOR UPDATE',
                 $itemId
             );
 
             if (DB::count() === 0) {
+                DB::rollback();
                 return [
                     'error' => true,
                     'error_message' => 'Item not found',
                     'error_header' => 'HTTP/1.1 404 Not Found',
+                ];
+            }
+
+            // The controller checks authorization before reserving the idempotency key. Repeat
+            // it under the item row lock so a concurrent move cannot invalidate that decision.
+            $folderAccessModel = new FolderAccessModel();
+            if ($folderAccessModel->canAccessItemInFolder(
+                $userData,
+                (int) $currentItem['id_tree'],
+                $itemId
+            ) === false || $folderAccessModel->canDeleteInFolder(
+                (int) $currentItem['id_tree'],
+                (int) $userData['id']
+            ) === false || $folderAccessModel->satisfiesItemRestriction(
+                $itemId,
+                (int) $userData['id']
+            ) === false) {
+                DB::rollback();
+                return [
+                    'error' => true,
+                    'error_message' => 'Access denied: you are not allowed to delete this item',
+                    'error_header' => 'HTTP/1.1 403 Forbidden',
+                ];
+            }
+
+            if ($expectedRevision !== null && $expectedRevision !== (int) ($currentItem['revision'] ?? 0)) {
+                DB::rollback();
+                return [
+                    'error' => true,
+                    'error_message' => 'The item was modified since revision ' . $expectedRevision . '.',
+                    'error_header' => 'HTTP/1.1 409 Conflict',
                 ];
             }
 
@@ -2166,6 +2330,7 @@ class ItemModel
             if ((bool) ($laprRelation['is_managed'] ?? false) === true
                 || (bool) ($laprRelation['is_credential'] ?? false) === true
             ) {
+                DB::rollback();
                 return [
                     'error' => true,
                     'error_message' => 'This item is linked to LAPR. Remove the managed account or linked endpoint first.',
@@ -2184,23 +2349,82 @@ class ItemModel
                 $itemId
             );
 
-            logItems($SETTINGS, $itemId, $currentItem['label'], $userData['id'], 'at_delete', $userData['username']);
+            logItems(
+                $SETTINGS,
+                $itemId,
+                $currentItem['label'],
+                $userData['id'],
+                'at_delete',
+                $userData['username'],
+                null,
+                null,
+                null,
+                null,
+                false,
+                true
+            );
 
             updateCacheTable('delete_value', $itemId);
 
-            // Success response
-            return [
+            emitItemEvent(
+                'deleted',
+                $itemId,
+                (int) $currentItem['id_tree'],
+                (string) $currentItem['label'],
+                (string) $userData['username'],
+                (int) $userData['id']
+            );
+
+            $revisionMetadata = getItemRevisionMetadata($itemId);
+            if ($revisionMetadata['revision'] <= (int) ($currentItem['revision'] ?? 0)
+                || $revisionMetadata['revision_changed_at'] === null
+            ) {
+                throw new RuntimeException('The item deletion revision could not be persisted.');
+            }
+            $response = [
                 'error' => false,
                 'message' => 'Item deleted successfully',
                 'item_id' => $itemId,
+                'revision' => $revisionMetadata['revision'],
+                'revision_changed_at' => $revisionMetadata['revision_changed_at'],
             ];
 
-        } catch (Exception $e) {
-            // Error response
+            if ($idempotencyModel !== null && $idempotencyReservation !== null) {
+                $idempotencyModel->completeReservation($idempotencyReservation, $itemId, 200, $response);
+            }
+
+            DB::commit();
+            $transactionStarted = false;
+
+            // Keep the external syslog datagram outside the SQL transaction. Replays return
+            // the stored response above the model and therefore never emit it again.
+            emitItemSyslog(
+                $SETTINGS,
+                $itemId,
+                (string) $currentItem['label'],
+                'at_delete',
+                (string) $userData['username']
+            );
+
+            return $response;
+        } catch (Throwable $e) {
+            if ($transactionStarted === true) {
+                DB::rollback();
+                resetItemRevisionMemo();
+            }
+
+            error_log(
+                '[API] ItemModel::deleteItem failed for item '
+                . $itemId
+                . ' [' . get_class($e) . ':' . (int) $e->getCode() . ']'
+                . ' ' . $e->getMessage()
+                . ' in ' . $e->getFile() . ':' . $e->getLine()
+            );
+
             return [
                 'error' => true,
                 'error_header' => 'HTTP/1.1 500 Internal Server Error',
-                'error_message' => $e->getMessage(),
+                'error_message' => 'An internal error occurred while deleting the item.',
             ];
         }
     }

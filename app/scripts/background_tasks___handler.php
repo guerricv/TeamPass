@@ -35,6 +35,7 @@ require_once __DIR__.'/../sources/main.functions.php';
 require_once __DIR__ . '/../sources/backup.functions.php';
 require_once __DIR__ . '/../sources/lapr.functions.php';
 require_once __DIR__ . '/taskLogger.php';
+require_once __DIR__ . '/backgroundTaskLock.php';
 
 class BackgroundTasksHandler {
     private array $settings;
@@ -43,7 +44,7 @@ class BackgroundTasksHandler {
     private int $maxExecutionTime;
     private int $batchSize;
     private int $maxTimeBeforeRemoval;
-    private mixed $lockFileHandle = null;
+    private ?BackgroundTaskLock $processLock = null;
     /** @var array<int, array{process: Process, task: array<string, mixed>, resourceKey: ?string}> Running process pool */
     private array $pool = [];
     private string $triggerFile;
@@ -951,45 +952,15 @@ class BackgroundTasksHandler {
     private function acquireProcessLock(): bool {
         $lockFile = !empty(TASKS_LOCK_FILE) ? TASKS_LOCK_FILE : (defined('TEAMPASS_STORAGE') ? TEAMPASS_STORAGE . '/logs/teampass_background_tasks.lock' : __DIR__ . '/../../storage/logs/teampass_background_tasks.lock');
 
-        // Opening (or creating) the lock file failing is NOT a concurrency
-        // situation but a filesystem/permission problem (typically the web
-        // server user cannot write to storage/logs). Surface it via error_log()
-        // because LOG_TASKS may be disabled and the task log itself lives in the
-        // same directory, so the failure would otherwise be completely silent.
-        $fp = @fopen($lockFile, 'w');
-        if ($fp === false) {
-            error_log(
-                'Teampass Background Tasks: cannot create lock file "' . $lockFile
-                . '" - check that the web server user can write to this directory.'
-            );
-            return false;
-        }
-
-        if (!flock($fp, LOCK_EX | LOCK_NB)) {
-            // Another handler instance already holds the lock: expected, not an error.
-            fclose($fp);
-            return false;
-        }
-
-        fwrite($fp, (string)getmypid());
-        $this->lockFileHandle = $fp;
-        return true;
+        $this->processLock ??= new BackgroundTaskLock($lockFile);
+        return $this->processLock->acquire();
     }
 
     /**
      * Release the lock file.
      */
     private function releaseProcessLock(): void {
-        if ($this->lockFileHandle !== null) {
-            flock($this->lockFileHandle, LOCK_UN);
-            fclose($this->lockFileHandle);
-            $this->lockFileHandle = null;
-        }
-
-        $lockFile = !empty(TASKS_LOCK_FILE) ? TASKS_LOCK_FILE : (defined('TEAMPASS_STORAGE') ? TEAMPASS_STORAGE . '/logs/teampass_background_tasks.lock' : __DIR__ . '/../../storage/logs/teampass_background_tasks.lock');
-        if (file_exists($lockFile)) {
-            unlink($lockFile);
-        }
+        $this->processLock?->release();
     }
 
     /**

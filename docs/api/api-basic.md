@@ -553,7 +553,14 @@ curl -X GET "https://your-teampass.com/api/index.php/item/getOtp?id=123" \
 | **Method** | POST |
 | **URL** | `<Teampass URL>/api/index.php/item/create` |
 | **Content-Type** | `application/json` |
-| **Headers** | `Authorization: Bearer <token>` |
+| **Headers** | `Authorization: Bearer <token>`; optional `Idempotency-Key: <opaque-key>` |
+
+`Idempotency-Key` accepts 1–128 visible ASCII characters without spaces. It is scoped to the
+authenticated user and this operation. TeamPass keeps the completed result for the configured
+offline synchronization window (`offline_sync_window_days`, 90 days by default, `0` for no limit):
+retrying the same functional request returns the original `201`, `Location` and body without
+creating anything again, and adds `Idempotency-Replayed: true`. Reusing the key with a changed
+payload returns `409`. A duplicate request still processing returns `409` and `Retry-After`.
 
 **Request Body (JSON):**
 ```json
@@ -607,10 +614,12 @@ curl -X GET "https://your-teampass.com/api/index.php/item/getOtp?id=123" \
 
 | Code | Description |
 | ---- | ----------- |
-| 200 | Item created successfully |
-| 400 | Missing or invalid parameters |
+| 201 | Item created successfully (including an idempotent replay) |
+| 400 | Missing/invalid parameters or invalid `Idempotency-Key` |
 | 401 | Invalid token or expired session |
 | 403 | Create permission denied or access denied to folder |
+| 409 | Key already used with another payload, or an identical request is still processing |
+| 422 | Item validation failed |
 | 500 | Server error |
 
 **Example:**
@@ -618,6 +627,7 @@ curl -X GET "https://your-teampass.com/api/index.php/item/getOtp?id=123" \
 curl -X POST "https://your-teampass.com/api/index.php/item/create" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000" \
   -d '{
     "label": "My new item",
     "folder_id": 5,
@@ -631,6 +641,11 @@ curl -X POST "https://your-teampass.com/api/index.php/item/create" \
     "icon": "fa-solid fa-key"
   }'
 ```
+
+Run the same command again to replay its result. Keeping the key but changing, for example,
+`label` or `password` demonstrates the `409` key/payload conflict. TeamPass stores only
+server-secret HMACs of the key and functional payload, never the raw key, body, password, TOTP
+secret or custom-field values.
 
 ---
 
@@ -754,58 +769,59 @@ curl -X PUT "https://your-teampass.com/api/index.php/item/update" \
 | ---- | ----------- |
 | **Endpoint** | `item/delete` |
 | **Method** | DELETE |
-| **URL** | `<Teampass URL>/api/index.php/item/delete` |
-| **Content-Type** | `application/json` |
-| **Headers** | `Authorization: Bearer <token>` |
+| **URL** | `<Teampass URL>/api/index.php/item/delete?id=<id>&revision=<revision>` |
+| **Content-Type** | Not required (parameters are in the query string) |
+| **Headers** | `Authorization: Bearer <token>`; optional `Idempotency-Key: <opaque-key>` |
 
-**Request Body (JSON):**
-```json
-{
-  "id": 123
-}
-```
-
-**Body Parameters:**
+**Query Parameters:**
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `id` | integer | ✅ | Item ID to delete |
+| `revision` | integer | ❌ | Current unsigned item revision. A mismatch returns `409` before any mutation. Omitting it or sending an empty value retains the historical last-writer-wins behavior. |
+
+The optional idempotency key uses the same syntax, user/operation scope and configured window as
+create. Its fingerprint includes both `id` and the optional `revision`. A replay returns the
+original success body plus `Idempotency-Replayed: true` without a second delete, audit, revision,
+cache update or WebSocket event. It therefore cannot delete an item again after a later restore.
 
 **Response (success):**
 ```json
 {
   "error": false,
   "message": "Item deleted successfully",
-  "item_id": "123"
+  "item_id": 123,
+  "revision": 4128,
+  "revision_changed_at": 1787563490
 }
 ```
+
+The revision/date pair is the delete tombstone subsequently returned by `GET /item/changes`.
 
 **Response Codes:**
 
 | Code | Description |
 | ---- | ----------- |
 | 200 | Item deleted successfully |
-| 400 | Missing ID or inconsistent data |
+| 400 | Missing ID, invalid revision or invalid idempotency key |
 | 403 | Delete permission denied or access denied — including a folder granted as `R`, `ND` or `NDNE` (check `can_delete` on [`folder/writableFolders`](#writable-folders)) |
 | 404 | Item not found |
-| 422 | HTTP method not supported (must be DELETE) |
+| 405 | HTTP method not supported (must be DELETE) |
+| 409 | Stale revision, LAPR protection, key/request conflict, or identical request still processing |
 | 500 | Server error |
 
 **Example:**
 ```bash
-curl -X DELETE "https://your-teampass.com/api/index.php/item/delete" \
+curl -X DELETE "https://your-teampass.com/api/index.php/item/delete?id=123&revision=4127" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": 123
-  }'
+  -H "Idempotency-Key: 8fe52f47-6f72-4a1a-b0d8-68a01c884d41"
 ```
 
 ---
 
 ### Get all tags {#all-tags}
 
-> 📋 Returns the complete list of unique tags existing in the database
+> 📋 Returns the unique tags carried by the items you can read
 
 | Info | Description |
 | ---- | ----------- |
@@ -814,6 +830,10 @@ curl -X DELETE "https://your-teampass.com/api/index.php/item/delete" \
 | **URL** | `<Teampass URL>/api/index.php/item/allTags` |
 | **Parameters** | None |
 | **Headers** | `Authorization: Bearer <token>` |
+
+The list is scoped to your own read access: only tags carried by non-deleted items sitting in
+folders you can access, excluding items you have been restricted from. Two users of the same
+instance therefore do not necessarily get the same list.
 
 **Response (success):**
 ```json
@@ -1184,8 +1204,8 @@ curl -s -X GET "https://your-teampass.com/api/index.php/folder/writableFolders" 
 | `complexity` | integer | ✅¹ | Complexity level: 0 (Weak), 20 (Medium), 38 (Strong), 48 (Heavy), 60 (Very heavy) |
 | `private` | boolean | ❌ | Create a personal (private) folder under your personal root. When `true`, `parent_id` and `complexity` become optional. Personal folders must be enabled for your account. |
 | `duration` | integer | ❌ | Expiration delay in minutes (0 = no expiration) |
-| `create_auth_without` | integer | ❌ | Allow creation even if complexity insufficient (0/1) |
-| `edit_auth_without` | integer | ❌ | Allow update even if complexity insufficient (0/1) |
+| `create_auth_without` | integer | ❌ | Allow item creation below the folder's minimum password strength (0/1). Omitted: inherit the parent's value, or 0 at root. Explicit 0 disables the exception. |
+| `edit_auth_without` | integer | ❌ | Allow item editing below the folder's minimum password strength (0/1). Omitted: inherit the parent's value, or 0 at root. Explicit 0 disables the exception. |
 | `icon` | string | ❌ | FontAwesome icon code (closed state) |
 | `icon_selected` | string | ❌ | FontAwesome icon code (open/selected state) |
 | `access_rights` | string | ❌ | Access type granted to your roles on the new folder: R (Read), W (Write), ND (No deletion), NE (No edit), NDNE (No deletion and No edit). **Defaults to `W`** when omitted. |
@@ -1293,8 +1313,8 @@ Partial update: only `id` is required; any field you omit keeps its current valu
 | `parent_id` | integer | ❌ | New parent ID (move). Cross-domain personal ↔ shared moves are rejected. |
 | `complexity` | integer | ❌ | New complexity level. Must be one of 0, 20, 38, 48, 60 — any other value is rejected with `422`. |
 | `duration` | integer | ❌ | Expiration delay in minutes |
-| `create_auth_without` | integer | ❌ | Allow creation even if complexity insufficient (0/1) |
-| `edit_auth_without` | integer | ❌ | Allow update even if complexity insufficient (0/1) |
+| `create_auth_without` | integer | ❌ | Allow item creation below the folder's minimum password strength (0/1). Omitted: preserve the current value. |
+| `edit_auth_without` | integer | ❌ | Allow item editing below the folder's minimum password strength (0/1). Omitted: preserve the current value. |
 | `icon` | string | ❌ | FontAwesome icon code (closed state) |
 | `icon_selected` | string | ❌ | FontAwesome icon code (open/selected state) |
 

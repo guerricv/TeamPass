@@ -827,7 +827,6 @@ switch ($inputData['type']) {
                         'setFolderCategories' => false,
                         'manageFolderPermissions' => true,
                         'copyCustomFieldsCategories' => false,
-                        'refreshCacheForUsersWithSimilarRoles' => true,
                     ];
 
                     // Capture unexpected failures (DB constraint, encoding, ...) instead of bubbling a 500
@@ -1766,25 +1765,10 @@ switch ($inputData['type']) {
         // Reload cache for user
         updateCacheTable('reload', NULL);
 
-        // Create user_build_cache_tree task for current user
-        $arguments = json_encode([
-            'user_id' => (int) $session->get('user-id'),
-        ], JSON_HEX_QUOT | JSON_HEX_TAG);
-        DB::insert(
-            prefixTable('background_tasks'),
-            array(
-                'created_at' => time(),
-                'process_type' => 'user_build_cache_tree',
-                'arguments' => $arguments,
-                'updated_at' => null,
-                'finished_at' => null,
-                'output' => null,
-            )
-        );
-
-        // Rebuild full tree
+        // Rebuild full tree, then invalidate the importer synchronously.
         $tree = new NestedTree(prefixTable('nested_tree'), 'id', 'parent_id', 'title');
         $tree->rebuild();
+        invalidateUserFolderCache([(int) $session->get('user-id')]);
 
         // Trigger background handler to process tasks
         triggerBackgroundHandler();
@@ -1846,7 +1830,11 @@ function createFolder($folderTitle, $parentId, $folderLevel, $startPathLevel, $l
         $parentId
     );
     if (DB::count() === 0) {
-        //do query
+        // Like FolderManager, copy the parent's special options only at creation.
+        $parentOptions = DB::queryFirstRow(
+            'SELECT bloquer_creation, bloquer_modification FROM ' . prefixTable('nested_tree') . ' WHERE id = %i',
+            (int) $parentId
+        );
         DB::insert(
             prefixTable('nested_tree'),
             array(
@@ -1855,6 +1843,8 @@ function createFolder($folderTitle, $parentId, $folderLevel, $startPathLevel, $l
                 'nlevel' => (int) ($folderLevel + $startPathLevel),
                 'categories' => '',
                 'personal_folder' => $isPersonalFolder,
+                'bloquer_creation' => (int) ($parentOptions['bloquer_creation'] ?? 0),
+                'bloquer_modification' => (int) ($parentOptions['bloquer_modification'] ?? 0),
             )
         );
         $id = DB::insertId();

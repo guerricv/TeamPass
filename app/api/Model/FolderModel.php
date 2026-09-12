@@ -166,13 +166,18 @@ class FolderModel
         return $ret;
     }
 
+    /**
+     * Create a folder. Null special options inherit the parent's values; 0/1 override them.
+     *
+     * @return array
+     */
     public function createFolder(
         string $title,
         int $parent_id,
         int $complexity,
         int $duration,
-        int $create_auth_without,
-        int $edit_auth_without,
+        ?int $create_auth_without,
+        ?int $edit_auth_without,
         string $icon,
         string $icon_selected,
         string $access_rights,
@@ -238,8 +243,9 @@ class FolderModel
         $parent_id = $inputData['parent_id'];
         $complexity = $inputData['complexity'];
         $duration = isset($inputData['duration']) === true ? $inputData['duration'] : 0;
-        $create_auth_without = isset($inputData['create_auth_without']) === true ? $inputData['create_auth_without'] : 0;
-        $edit_auth_without = isset($inputData['edit_auth_without']) === true ? $inputData['edit_auth_without'] : 0;
+        // Preserve omission across integer sanitization so FolderManager can apply inheritance.
+        $create_auth_without = $create_auth_without === null ? null : (int) $inputData['create_auth_without'];
+        $edit_auth_without = $edit_auth_without === null ? null : (int) $inputData['edit_auth_without'];
         $icon = $inputData['icon'];
         $icon_selected = $inputData['icon_selected'];
         // The controller always forwards the key (empty string when the client omitted it),
@@ -357,8 +363,8 @@ class FolderModel
             'personal_folder' => (int) $isPersonal,
             'complexity' => (int) $complexity,
             'duration' => (int) $duration,
-            'create_auth_without' => (int) $create_auth_without,
-            'edit_auth_without' => (int) $edit_auth_without,
+            'create_auth_without' => $create_auth_without,
+            'edit_auth_without' => $edit_auth_without,
             'icon' => (string) $icon,
             'icon_selected' => (string) $icon_selected,
             'access_rights' => (string) $access_rights,
@@ -377,7 +383,6 @@ class FolderModel
             'setFolderCategories' => false,
             'manageFolderPermissions' => true,
             'copyCustomFieldsCategories' => false,
-            'refreshCacheForUsersWithSimilarRoles' => true,
         ];
         $creationStatus = $folderManager->createNewFolder($params, $options);
 

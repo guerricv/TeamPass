@@ -194,7 +194,7 @@ class FolderManager
         $tree->rebuild();
 
         // Invalidate cache for users with access to this folder
-        invalidateCacheForFolderUsers($folderId);
+        invalidateCacheForFolderUsers($folderId, [(int) ($params['user_id'] ?? 0)]);
         if (!empty($params['parent_changed'])) {
             $this->refreshCacheForUsersWithSimilarRoles((string) ($params['user_roles'] ?? ''));
         }
@@ -346,21 +346,22 @@ class FolderManager
 
             // Collect affected users BEFORE deleting folders/roles
             $folderForDel = array_values(array_unique($folderForDel));
-            $affectedUserIds = [];
+            $affectedUserIds = [$userId];
             if (empty($folderForDel) === false) {
-                $affectedUserIds = DB::queryFirstColumn(
+                $affectedUserIds = array_merge($affectedUserIds, DB::queryFirstColumn(
                     'SELECT DISTINCT ur.user_id FROM ' . prefixTable('users_roles') . ' ur
                     JOIN ' . prefixTable('roles_values') . ' rv ON ur.role_id = rv.role_id
                     WHERE rv.folder_id IN %ls',
                     $folderForDel
-                );
+                ), DB::queryFirstColumn(
+                    'SELECT user_id FROM ' . prefixTable('users_groups') . ' WHERE group_id IN %li',
+                    $folderForDel
+                ));
             }
 
             foreach ($folderForDel as $fol) {
                 DB::delete(prefixTable('nested_tree'), 'id = %i', $fol);
             }
-
-            invalidateCacheForFolderUsers(0, $affectedUserIds);
 
             DB::commit();
         } catch (Throwable $e) {
@@ -370,6 +371,7 @@ class FolderManager
 
         // Rebuild the tree after commit (mirrors the web handler)
         $tree->rebuild();
+        invalidateCacheForFolderUsers(0, $affectedUserIds);
 
         // Emit WebSocket events for deleted folders
         foreach ($foldersDeletedInfo as $deletedFolder) {
@@ -530,7 +532,6 @@ class FolderManager
     private function createFolder($params, $parentFolderData, $options)
     {
         // Decompose parameters
-        $title = $params['title'] ?? '';
         $parent_id = $params['parent_id'] ?? 0;
         $isPersonal = $params['personal_folder'] ?? 0;
         $complexity = $params['complexity'] ?? 0;
@@ -569,16 +570,13 @@ class FolderManager
                 return ['error' => true, 'newId' => null, 'db_error' => true];
             }
 
-            // Post-commit: heavy / non-transactional work (tree rebuild locks the whole
-            // nested_tree table, cache refresh queues background tasks in its own
-            // transaction — neither may run inside the transaction above).
-            $this->updateTimestamp((int) $newId);
+            // Rebuild after the business transaction, then invalidate affected users.
+            // NestedTree::rebuild() locks the table and must not run before commit.
             if (isset($options['rebuildFolderTree']) && $options['rebuildFolderTree'] === true) {
-                $this->rebuildFolderTree($user_is_admin, $title, $parent_id, $isPersonal, $user_id, $newId);
+                $this->rebuildFolderTree($isPersonal, $newId);
             }
-            if (isset($options['refreshCacheForUsersWithSimilarRoles']) && $options['refreshCacheForUsersWithSimilarRoles'] === true) {
-                $this->refreshCacheForUsersWithSimilarRoles($user_roles);
-            }
+            // Include the creator even when no role covers the folder (personal folders).
+            invalidateCacheForFolderUsers((int) $newId, [(int) $user_id]);
 
             return ['error' => false, 'newId' => $newId];
         } else {
@@ -645,17 +643,9 @@ class FolderManager
     }
 
     /**
-     * Invalidate cache for users with access to the given folder.
+     * Rebuilds the folder tree and updates the current session.
      */
-    private function updateTimestamp(int $folderId)
-    {
-        invalidateCacheForFolderUsers($folderId);
-    }
-
-    /**
-     * Rebuilds the folder tree and updates the cache for non-admin users.
-     */
-    private function rebuildFolderTree($user_is_admin, $title, $parent_id, $isPersonal, $user_id, $newId)
+    private function rebuildFolderTree($isPersonal, $newId)
     {
         $tree = new NestedTree(prefixTable('nested_tree'), 'id', 'parent_id', 'title');
         $tree->rebuild();
@@ -667,69 +657,6 @@ class FolderManager
         if (session_status() === PHP_SESSION_ACTIVE) {
             $sess_key = $isPersonal ? 'user-personal_folders' : 'user-accessible_folders';
             SessionManager::addRemoveFromSessionArray($sess_key, [$newId], 'add');
-        }
-
-        if ($user_is_admin === 0) {
-            $this->updateUserFolderCache($tree, $title, $parent_id, $isPersonal, $user_id, $newId);
-        }
-    }
-
-    /**
-     * Updates the user folder cache for non-admin users.
-     */
-    private function updateUserFolderCache($tree, $title, $parent_id, $isPersonal, $user_id, $newId)
-    {
-        $path = '';
-        $tree_path = $tree->getPath(0, false);
-        foreach ($tree_path as $fld) {
-            $path .= empty($path) ? $fld->title : '/' . $fld->title;
-        }
-
-        $new_json = [
-            "path" => $path,
-            "id" => $newId,
-            "level" => count($tree_path),
-            "title" => $title,
-            "disabled" => 0,
-            "parent_id" => $parent_id,
-            "perso" => $isPersonal,
-            "is_visible_active" => 0,
-        ];
-
-        $cache_tree = DB::queryFirstRow(
-            'SELECT increment_id, folders, visible_folders 
-            FROM ' . prefixTable('cache_tree') . ' 
-            WHERE user_id = %i', 
-            (int) $user_id
-        );
-
-        if (empty($cache_tree)) {
-            DB::insert(
-                prefixTable('cache_tree'), 
-                [
-                    'user_id' => $user_id,
-                    'folders' => json_encode([$newId]),
-                    'visible_folders' => json_encode($new_json),
-                    'timestamp' => time(),
-                    'data' => '[{}]',
-                ]
-            );
-        } else {
-            $folders = json_decode($cache_tree['folders'] ?? '[]', true);
-            $visible_folders = json_decode($cache_tree['visible_folders'] ?? '[]', true);
-            $folders[] = $newId;
-            $visible_folders[] = $new_json;
-
-            DB::update(
-                prefixTable('cache_tree'), 
-                [
-                    'folders' => json_encode($folders),
-                    'visible_folders' => json_encode($visible_folders),
-                    'timestamp' => time(),
-                ],
-                'increment_id = %i', 
-                (int) $cache_tree['increment_id']
-            );
         }
     }
 

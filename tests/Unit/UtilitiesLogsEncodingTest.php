@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
+use TeampassClasses\Language\Language;
 
 // Real production logic (DB-free), included by app/sources/main.functions.php as well.
 require_once __DIR__ . '/../../app/sources/log_display_logic.php';
@@ -147,11 +148,47 @@ class UtilitiesLogsEncodingTest extends TestCase
             );
         }
 
-        foreach (['label', 'user_login', 'action', 'reason'] as $field) {
+        foreach (['label', 'user_display', 'action_display', 'reason_display'] as $field) {
             self::assertStringContainsString(
                 "normalizeLogDisplayValue(\$row['{$field}'] ?? '')",
                 $knowledgeBase
             );
+        }
+        self::assertStringContainsString('formatKnowledgeBaseLogRow(', $knowledgeBase);
+        self::assertStringContainsString('knowledgeBaseLogRowMatchesSearch(', $knowledgeBase);
+    }
+
+    /** Test the display/search helpers directly with current catalog wording. */
+    public function testKnowledgeBaseLogsTranslateAndSearchDisplayedValuesWhileKeepingTextSafe(): void
+    {
+        $rows = [
+            ['date' => 100, 'label' => 'Guide', 'user_id' => 42, 'user_login' => 'clem', 'action' => 'at_shown', 'reason' => ''],
+            ['date' => 101, 'label' => 'Guide', 'user_id' => 43, 'user_login' => 'old-login', 'action' => 'at_modification', 'reason' => 'label, allow_comments, associated_items'],
+            ['date' => 102, 'label' => '<b>Title</b>', 'user_id' => 44, 'user_login' => '<b>login</b>', 'action' => 'legacy_action', 'reason' => '<img src=x onerror=alert(1)>'],
+        ];
+        $users = [42 => ['name' => 'Clémence', 'lastname' => 'Dupont', 'login' => 'clem']];
+        foreach (['french', 'english'] as $language) {
+            $lang = new Language($language, __DIR__ . '/../../app/includes/language');
+            $data = array_map(static fn (array $row): array => formatKnowledgeBaseLogRow($row, $users[$row['user_id']] ?? [], $lang), $rows);
+            self::assertSame('Clémence Dupont [clem]', $data[0]['user_display']);
+            self::assertSame($lang->get('at_shown'), $data[0]['action_display']);
+            self::assertSame('old-login', $data[1]['user_display']);
+            self::assertSame($lang->get('at_modification'), $data[1]['action_display']);
+            self::assertSame('at_modification', $data[1]['action']);
+            self::assertSame(
+                implode(', ', [$lang->get('label'), $lang->get('kb_allow_comments'), $lang->get('kb_associated_items')]),
+                $data[1]['reason_display']
+            );
+            self::assertSame('&lt;b&gt;login&lt;/b&gt;', normalizeLogDisplayValue($data[2]['user_display']));
+            self::assertSame('legacy_action', $data[2]['action_display']);
+            self::assertSame('&lt;img src=x onerror=alert(1)&gt;', normalizeLogDisplayValue($data[2]['reason_display']));
+            foreach (['clémence', 'Dupont', (string) $lang->get('at_shown')] as $search) {
+                self::assertTrue(knowledgeBaseLogRowMatchesSearch($data[0], $search));
+                self::assertFalse(knowledgeBaseLogRowMatchesSearch($data[1], $search));
+            }
+            self::assertTrue(knowledgeBaseLogRowMatchesSearch($data[1], (string) $lang->get('kb_associated_items')));
+            self::assertTrue(knowledgeBaseLogRowMatchesSearch($data[0], ''));
+            self::assertFalse(knowledgeBaseLogRowMatchesSearch($data[0], 'no-such-log-value'));
         }
     }
 

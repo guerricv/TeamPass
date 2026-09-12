@@ -731,21 +731,6 @@ trait UserHandlerTrait {
             );
         }
 
-        // Prepare initial cache
-        DB::insert(
-            prefixTable('background_tasks'),
-            array(
-                'created_at' => time(),
-                'process_type' => 'user_build_cache_tree',
-                'arguments' => json_encode([
-                    'user_id' => (int) $arguments['new_user_id'],
-                ], JSON_HEX_QUOT | JSON_HEX_TAG),
-                'updated_at' => null,
-                'finished_at' => null,
-                'output' => null,
-            )
-        );
-
         /*
         // Does user has personal items?
         $personalItemsCount = DB::queryFirstField(

@@ -207,6 +207,10 @@ if (function_exists('emailsTemplatesSampleValues') === false) {
             '#tp_externalized_retention_count#' => '10',
             '#tp_externalized_purge_deleted#' => '1',
             '#tp_externalized_retry#' => '-',
+            // Licence trial, offline request link
+            '#tp_fqdn#' => 'teampass.example.com',
+            '#tp_contact_email#' => $email,
+            '#tp_trial_link#' => 'https://licence.teampass.net/api/v1.2/trial-request.php?fqdn=...',
         ];
     }
 }

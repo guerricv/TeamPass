@@ -166,6 +166,8 @@ the current revision in the prunable journal. Returned everywhere `revision` is 
 
 **Permissions:** `allowed_to_read`. Uses folder access constraint — IDOR protection via sharekey (item skipped if no sharekey found for user).
 
+**Item-level restriction:** an item narrowed after creation to a subset of users (`items.restricted_to`) or of roles (`restriction_to_roles`) is **omitted** for a caller outside that subset, exactly like the web refuses to open it. Folder membership and the presence of a sharekey do not express the restriction — narrowing an item never revokes the sharekey an excluded user already holds — so this is a distinct check, enforced at the single read choke point `ItemModel::getItems()` and therefore shared by `item/get`, `item/inFolders` and `item/changes`. The `manager_edit` derogation is **not** honoured: it only ever widened the item card on the web, never the password itself. `X-Total-Count` counts the same predicate.
+
 **LIKE search:** `label` and `description` params trigger a `LIKE %value%` search. The `%` and `_` characters in the input are escaped to prevent LIKE injection.
 
 ---
@@ -176,7 +178,7 @@ Get items in one or more folders.
 
 **Params:** `folders` (comma-separated or JSON array of folder IDs), optional `limit` (default unlimited, max 500) and `offset` (default 0; forces `limit=50` if no limit given). Returns `X-Total-Count`; empty result → `200` + `[]`.
 
-**Permissions:** `allowed_to_read`.
+**Permissions:** `allowed_to_read` + the item-level restriction described under `item/get`.
 
 ---
 
@@ -188,7 +190,7 @@ Find items by URL match.
 
 **Response:** array of `{ id, revision, revision_changed_at, label, login, url, folder_id, has_otp, favicon_url }`. Empty result → `200` + `[]`.
 
-**Permissions:** `allowed_to_read`.
+**Permissions:** `allowed_to_read` + the item-level restriction described under `item/get` (this endpoint builds its own query, so the predicate is applied there).
 
 ---
 
@@ -205,7 +207,7 @@ Get current TOTP code for an item.
 
 **Error codes:** 400 (missing id), 403 (access denied / OTP not enabled), 404 (item not found / OTP not configured), 500 (decrypt failed).
 
-**Permissions:** `allowed_to_read` + folder access + item-level restriction check.
+**Permissions:** `allowed_to_read` + folder access + item-level restriction check (`403` when the caller is outside `restricted_to` / `restriction_to_roles`; evaluated **before** the TOTP secret is decrypted).
 
 ---
 
@@ -225,6 +227,8 @@ Delta feed for offline clients (mobile vault). Answers "what must I apply since 
 
 **Rule: the cursor stops before an undeliverable change.** An item whose sharekeys are still being distributed by the background task is visible but not readable; advancing past it would hide it from that client permanently. `has_more` stays true and it is offered again.
 
+**Rule: an item the caller has been restricted from leaves as a tombstone, not as a hole.** The item-level restriction is applied to the delta's *visibility* clause, not only to its payload, so narrowing an item reports it once in `removed` with `reason: out_of_scope` and the offline client drops its cached copy. Applying it to the payload alone would leave the item permanently "visible but undeliverable" and freeze the cursor.
+
 **Not covered:** losing access to a whole folder produces **no** journal entry (nothing changed on the items). Clients must also reconcile against `folder/writableFolders` and drop cached items whose folder disappeared.
 
 **Permissions:** `allowed_to_read` (`'changes'` is in the `checkUSerCRUDRights()` read whitelist, `api/inc/bootstrap.php`).
@@ -237,6 +241,8 @@ Get all distinct item tags accessible to the user.
 
 **Response:** array of tag strings.
 
+**Scope:** tags of non-deleted items in the caller's accessible folders only, minus any foreign personal tree and any item the caller is restricted from — the same authorization as the item reads. Before 3.2.2.4 the handler did a bare `SELECT DISTINCT tag` over the whole table and disclosed the tags of every folder in the instance, contradicting this endpoint's own contract. A sharekey is **not** required: tags are metadata, and requiring one would make the list flicker while the background fan-out runs.
+
 **Permissions:** `allowed_to_read`.
 
 ---
@@ -247,9 +253,19 @@ Create a new item.
 
 **Body:** `label`, `password`, `folder_id`, optional `description`, `login`, `email`, `url`, `tags`, `totp`, `fields`.
 
+**Optional idempotency:** `Idempotency-Key: <opaque-key>` (1–128 visible ASCII characters,
+without spaces). Its identity is scoped to the authenticated user and `item.create`. The first
+accepted request returns the normal `201`; an identical replay within the configured offline-sync
+window (`offline_sync_window_days`, 90 days by default, `0` for no limit) returns the exact stored
+result and `Idempotency-Replayed: true` without repeating any write or side effect. Reusing the key
+with a different functional payload returns `409`. A concurrent request still holding the key's
+processing lease also returns `409` with `Retry-After`. The fingerprint covers every functional
+create field, including credential, TOTP and custom-field values, but is a server-secret HMAC:
+neither those values, the request body nor the raw key is persisted.
+
 **Custom fields:** `fields` = array of `{ id, value }` (field id + value). Encrypt-before-INSERT for encrypted categories; creator sharekey created synchronously, other users via the `new_item` background task. Only fields tied to the folder are stored; empty values ignored. Requires `item_extra_fields`.
 
-**Response 201:** `{ error: false, message, newId, revision, revision_changed_at }` + `Location: /api/v1/item/get?id=<newId>` (path-absolute reference). Validation failures → `422`; missing fields → `400`; folder not allowed / read-only → `403`.
+**Response 201:** `{ error: false, message, newId, revision, revision_changed_at }` + `Location: /api/v1/item/get?id=<newId>` (path-absolute reference). An idempotent replay preserves both. Validation failures → `422`; missing fields or invalid idempotency key → `400`; folder not allowed / read-only → `403`.
 
 **Permissions:** `allowed_to_create`. Blocked with 403 if folder is read-only for user.
 
@@ -303,6 +319,8 @@ The password guard compares against the **decrypted** current value, so resendin
 
 **Error bodies:** validation failures (`InvalidArgumentException` / `UnexpectedValueException`) return their message with `422`. Every other internal failure returns a generic `500` — the exception message is written to the server log only, never to the client.
 
+**Item-level restriction:** a caller outside the item's `restricted_to` / `restriction_to_roles` subset gets `403` and **nothing is written**, mirroring the web `update_item` handler, which refuses in the same case. This matters beyond confidentiality: a password written by an excluded user is then redistributed to every folder member by the sharekey fan-out.
+
 **Permissions:** `allowed_to_update`. Source folder must not be read-only. If `folder_id` changes (move), **target folder** must also not be read-only for the user.
 
 ---
@@ -311,9 +329,25 @@ The password guard compares against the **decrypted** current value, so resendin
 
 Soft-delete an item.
 
-**Params:** `id` (int).
+**Params:** `id` (int), optional `revision` (unsigned 32-bit integer). When supplied, `revision`
+is an optimistic-concurrency precondition checked against the locked item row immediately before
+the mutation. A mismatch returns `409` with no delete, audit, revision, cache change or WebSocket
+event. Omitting it or sending an empty query value preserves the historical last-writer-wins
+behavior.
+
+**Optional idempotency:** `Idempotency-Key` follows the same syntax and configured replay window as
+create, scoped to the authenticated user and `item.delete`. Its fingerprint contains the item id
+and the expected revision (including omission). A replay returns the original successful result
+with `Idempotency-Replayed: true`; it never deletes again, so a later restoration is not undone.
+The same key with another item or revision returns `409`; an in-progress request returns `409` and
+`Retry-After`.
+
+**Response 200:** `{ error: false, message, item_id, revision, revision_changed_at }`. The
+revision/date pair is the deletion revision later exposed by `GET /item/changes`.
 
 **LAPR:** `409` while the item is still referenced by a non-deleted managed account or enrolled endpoint — remove the managed account or reconfigure the endpoint first. The relationship has no FK, so deleting the item would orphan it and break rotation or endpoint authentication. Inactive when the LAPR module is disabled.
+
+**Item-level restriction:** a caller outside the item's `restricted_to` / `restriction_to_roles` subset gets `403`. It is evaluated before the `Idempotency-Key` reservation, so a refused delete never consumes the key, and again under the item row lock inside the transaction so a concurrent restriction change cannot slip through.
 
 **Permissions:** `allowed_to_delete`. Blocked with 403 if folder is read-only.
 
@@ -454,10 +488,10 @@ The key is `extension_url` (value = `cpassman_url`) — the doc previously named
 | 201 | Resource created (`item/create` adds a `Location` header) |
 | 400 | Missing or invalid parameters |
 | 401 | `"Missing Authorization header"` — no bearer token received (check webserver vhost passes Authorization on GET). `"Invalid or expired token"` — token present but rejected (bad signature, expired, malformed). Match on HTTP 401 status rather than the body string. |
-| 403 | Permission denied (folder read-only, admin required, CRUD rights missing) |
+| 403 | Permission denied (folder read-only, admin required, CRUD rights missing, caller outside the item's `restricted_to` / `restriction_to_roles` subset) |
 | 404 | Resource not found / unknown route |
 | 405 | HTTP method not supported for this endpoint (`Allow:` header lists supported methods) |
-| 409 | The supplied `revision` no longer matches the item (optimistic concurrency on `item/update`), the resource changed while the request was being processed (concurrent personal→shared item move), or the operation conflicts with a LAPR relationship (managed login/password update, move to a personal folder, delete of a linked item) |
+| 409 | The supplied `revision` no longer matches the item (`item/update` or `item/delete`), an idempotency key was reused with another request or is still processing, the resource changed while the request was being processed (concurrent personal→shared item move), or the operation conflicts with a LAPR relationship (managed login/password update, move to a personal folder, delete of a linked item) |
 | 422 | Validation failed (password rules, invalid complexity/access_rights, personal→shared move combined with another update or with unrecoverable keys, current password not recoverable on a password update — retryable while the sharekey fan-out is still running) |
 | 429 | Rate limit exceeded (`api_rate_limit_per_minute`) — `Retry-After` header gives the wait in seconds |
 | 500 | Internal server error (details logged server-side, not returned to client) |

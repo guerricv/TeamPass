@@ -86,6 +86,7 @@ $groupLabels = [
     'security' => $lang->get('emails_templates_group_security'),
     'items' => $lang->get('emails_templates_group_items'),
     'maintenance' => $lang->get('emails_templates_group_maintenance'),
+    'licence' => $lang->get('emails_templates_group_licence'),
 ];
 ?>
 

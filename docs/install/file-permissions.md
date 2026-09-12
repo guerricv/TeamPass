@@ -327,6 +327,50 @@ find ${TEAMPASS} -not -path "*/vendor/*" ! -type l -perm -o+w -ls
 
 **Utilities → System Health → File integrity** starts a read-only background scan. Detailed findings are stored in `storage/logs/file-integrity-report.json`, while the Dashboard and Health polling read the bounded `storage/logs/file-integrity-summary.json`. Both files carry the same scan identifier, and detailed findings are rejected if the identifiers do not match.
 
+The background-task lock and trigger, the file-integrity scan/enqueue locks and
+the optional task journal (`LOG_TASKS_FILE`, normally `storage/logs/teampass_tasks.log`)
+are runtime files, not release-manifest entries. TeamPass attempts to restrict their
+POSIX permissions to `0640` or `0600` whenever it opens them for writing, including
+when a deleted file is recreated. Existing `0600` modes are preserved and owner
+read/write access is ensured; the process umask is not changed.
+
+Locks and signals continue with existing access, with a warning, if opening
+succeeds but `chmod` fails. The journal is stricter because task arguments may be
+sensitive: after attempted repair it refuses any POSIX access for other users
+(`mode & 0007`). A group-writable `0660` journal owned by another account remains
+usable when `chmod` is denied; a `0664` journal does not. An invalid target or an
+actual open/write failure still prevents that operation. The permission scan
+continues to report unsafe permissions and access problems. No manual manifest
+update or permission-scan exclusion is needed.
+
+The journal is written only when `enable_tasks_log` is on. Absolute custom paths
+are used as-is; legacy relative paths resolve against `app/scripts/`. An empty
+log path retains the explicitly configured PHP error-log destination. A failed
+configured destination produces one diagnostic per process, without copying the
+lost entry into another log. Further writes are still attempted, so logging resumes
+if the destination is repaired; background processing is not stopped by a log failure.
+Concurrent appends preserve existing entries. Identity and permissions are checked
+again after waiting for the lock. If rotation replaced the journal during that wait,
+the writer reopens and retries once, before writing anything. Rotation must preserve
+the runtime owner/group and restricted permissions; this is not an atomic guarantee
+against arbitrary external replacements.
+
+Runtime directories must not be writable by untrusted users. Descriptor/path
+identity checks detect observed file replacements, but do not make path-based
+`chmod` atomic. Signal writers never wait on a competing producer in a web request;
+contention is distinguished from an I/O error. The scan-status probe opens existing
+locks read-only and neither creates them nor changes their permissions.
+
+The background-task lock is deleted by the handler that owns it, while still
+holding the lock and only when the path still names its inode. After acquiring
+a lock, the handler checks the same identity before writing its PID or starting
+work: an already-open descriptor to a deleted file must not admit another handler.
+A failed acquisition or repeated release cannot delete another handler's file.
+After an abrupt stop, a leftover file is reusable when the next handler can open
+it; file presence or an old PID alone does not indicate activity. Run manual
+handlers as the normal background/web account: a root-owned leftover may require
+an administrator to correct its ownership.
+
 The scan compares protected files with `app/files_reference.txt` and reports separate categories for modified, missing, unknown, legacy-layout and Composer development files. Instance-owned data under `storage/`, `secrets/` and legacy runtime directories (`files/`, `upload/`, `backups/`) is excluded. Repository and development-only artifacts such as `.claude/`, `.github/`, `docs/`, `tests/` and their root tooling files are neutral: they do not affect integrity health, are not audited for runtime permissions and are not included in permission remediation. Any top-level hidden *directory* is treated the same way, so a tool directory added later is covered without updating the policy, and the same applies to repository metadata vendored inside dependencies (`app/vendor/*/.github/`, `.gitignore`, `.travis.yml`, `.editorconfig`, …). The release checksum generator consumes this same canonical policy, keeping those paths out of future manifests. This is an explicit path policy, not a blanket hidden-file exclusion; top-level hidden *files* stay in scope, and `.htaccess`, `.user.ini`, `.env*`, `.gitkeep`, `app/includes/.externals/`, Composer deployment metadata, Docker assets and application scripts remain protected. Ordinary avatar files are ignored, but executable files or symbolic links planted in the writable public avatar directory are reported as critical. A deliberately removed `public/install/` directory is accepted; when that directory exists, its files are fully checked. The reference manifest itself and generated configuration files are excluded from self-comparison.
 
 The same background run also audits the effective POSIX permissions of TeamPass code and the runtime directory nodes. It checks the normal-runtime posture rather than the temporary upgrade posture:
@@ -389,8 +433,15 @@ This replaces the former `composer install --no-dev --optimize-autoloader` clean
 - Admin dashboard → *System Health* → *Cron Jobs* shows **Delayed** (or **Error**). Hover the info icon next to the badge for the same hint.
 - Tasks pile up in *Tasks → In progress* and only complete when the handler is launched by hand.
 - The PHP / web-server error log contains one of:
-  - `Teampass Background Tasks: cannot create lock file ".../storage/logs/teampass_background_tasks.lock" - check that the web server user can write to this directory.`
+  - `Teampass Background Tasks: cannot open a valid lock file ".../storage/logs/teampass_background_tasks.lock" - check that the web server user can write to this directory.`
   - `Teampass: cannot write background tasks trigger file ".../storage/logs/...".`
+
+> **Task log fixed in 3.2.2.** Between the move to the `storage/` layout and this
+> release, `enable_tasks_log` wrote nothing: the writer resolved the already
+> absolute `LOG_TASKS_FILE` against `app/scripts/`, producing a path whose parent
+> directory does not exist. An absolute value is now used verbatim, a legacy
+> relative one still resolves against `app/scripts/`, and the log is created with
+> the runtime permission policy above.
 
 **Cause**
 

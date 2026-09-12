@@ -345,9 +345,10 @@ if (null !== $post_type) {
                 'title' => isset($dataReceived['title']) === true ? $dataReceived['title'] : '',
                 'parentId' => isset($dataReceived['parentId']) === true ? $dataReceived['parentId'] : 0,
                 'complexity' => isset($dataReceived['complexity']) === true ? $dataReceived['complexity'] : '',
-                'duration' => isset($dataReceived['renewalPeriod']) === true ? $dataReceived['renewalPeriod'] : 0,
-                'create_auth_without' => isset($dataReceived['addRestriction']) === true ? $dataReceived['addRestriction'] : 0,
-                'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? $dataReceived['editRestriction'] : 0,
+                // The Items page omits these fields; -1 preserves the stored values on update.
+                'duration' => isset($dataReceived['renewalPeriod']) === true ? $dataReceived['renewalPeriod'] : -1,
+                'create_auth_without' => isset($dataReceived['addRestriction']) === true ? $dataReceived['addRestriction'] : -1,
+                'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? $dataReceived['editRestriction'] : -1,
                 'icon' => isset($dataReceived['icon']) === true ? $dataReceived['icon'] : '',
                 'icon_selected' => isset($dataReceived['iconSelected']) === true ? $dataReceived['iconSelected'] : '',
                 'access_rights' => isset($dataReceived['accessRight']) === true ? $dataReceived['accessRight'] : 'W',
@@ -627,9 +628,6 @@ if (null !== $post_type) {
                 $dataFolder['id']
             );
 
-            // Invalidate cache for users with access to this folder
-            invalidateCacheForFolderUsers((int) $dataFolder['id']);
-
             // Add or update complexity row for this folder.
             // Personal root folders can exist without a misc/complex row,
             // so a plain UPDATE may silently affect 0 rows and leave the UI
@@ -670,6 +668,7 @@ if (null !== $post_type) {
             );
 
             $tree->rebuild();
+            invalidateCacheForFolderUsers((int) $dataFolder['id'], [(int) $session->get('user-id')]);
 
             // Emit WebSocket event for real-time notification
             emitFolderEvent(
@@ -815,8 +814,9 @@ if (null !== $post_type) {
                 'personal_folder' => (int) $isPersonal,
                 'complexity' => (int) $inputData['complexity'],
                 'duration' => (int) $inputData['duration'],
-                'create_auth_without' => (int) $inputData['create_auth_without'],
-                'edit_auth_without' => (int) $inputData['edit_auth_without'],
+                // Null lets FolderManager inherit the parent; an explicit 0 disables the option.
+                'create_auth_without' => isset($dataReceived['addRestriction']) === true ? (int) $inputData['create_auth_without'] : null,
+                'edit_auth_without' => isset($dataReceived['editRestriction']) === true ? (int) $inputData['edit_auth_without'] : null,
                 'icon' => (string) $inputData['icon'],
                 'icon_selected' => (string) $inputData['icon_selected'],
                 'access_rights' => (string) $inputData['access_rights'],
@@ -833,7 +833,6 @@ if (null !== $post_type) {
                 'setFolderCategories' => false,
                 'manageFolderPermissions' => true,
                 'copyCustomFieldsCategories' => false,
-                'refreshCacheForUsersWithSimilarRoles' => true,
             ];
             $creationStatus = $folderManager->createNewFolder($params, $options);
 
@@ -886,8 +885,8 @@ if (null !== $post_type) {
                         ]
                         : '',
                     'renewalPeriod'  => (int) ($inputData['duration'] ?? 0),
-                    'add_is_blocked' => (int) ($inputData['create_auth_without'] ?? 0),
-                    'edit_is_blocked'=> (int) ($inputData['edit_auth_without'] ?? 0),
+                    'add_is_blocked' => (int) $newNode->bloquer_creation,
+                    'edit_is_blocked'=> (int) $newNode->bloquer_modification,
                     'icon'           => empty($inputData['icon']) ? TP_DEFAULT_ICON : $inputData['icon'],
                     'iconSelected'   => empty($inputData['icon_selected']) ? TP_DEFAULT_ICON_SELECTED : $inputData['icon_selected'],
                 ];
@@ -1145,14 +1144,17 @@ if (null !== $post_type) {
 
             // Collect affected users BEFORE deleting folders/roles
             $folderForDel = array_unique($folderForDel);
-            $affectedUserIds = [];
+            $affectedUserIds = [(int) $session->get('user-id')];
             if (!empty($folderForDel)) {
-                $affectedUserIds = DB::queryFirstColumn(
+                $affectedUserIds = array_merge($affectedUserIds, DB::queryFirstColumn(
                     'SELECT DISTINCT ur.user_id FROM ' . prefixTable('users_roles') . ' ur
                     JOIN ' . prefixTable('roles_values') . ' rv ON ur.role_id = rv.role_id
                     WHERE rv.folder_id IN %ls',
                     $folderForDel
-                );
+                ), DB::queryFirstColumn(
+                    'SELECT user_id FROM ' . prefixTable('users_groups') . ' WHERE group_id IN %li',
+                    $folderForDel
+                ));
             }
 
             // delete folders
@@ -1160,14 +1162,12 @@ if (null !== $post_type) {
                 DB::delete(prefixTable('nested_tree'), 'id = %i', $fol);
             }
 
-            // Invalidate cache for affected users
-            invalidateCacheForFolderUsers(0, $affectedUserIds);
-
             // Commit transaction
             DB::commit();
 
             //rebuild tree
             $tree->rebuild();
+            invalidateCacheForFolderUsers(0, $affectedUserIds);
 
             // Emit WebSocket events for deleted folders
             foreach ($foldersDeletedInfo as $deletedFolder) {
@@ -1594,7 +1594,7 @@ if (null !== $post_type) {
             $tree->rebuild();
 
             // Invalidate cache for users with access to destination folder
-            invalidateCacheForFolderUsers((int) $post_target_folder_id);
+            invalidateCacheForFolderUsers((int) $post_target_folder_id, [(int) $session->get('user-id')]);
 
             $data = array(
                 'error' => '',

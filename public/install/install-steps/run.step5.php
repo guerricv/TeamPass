@@ -434,10 +434,12 @@ class DatabaseInstaller
             `hibp_checked_at` varchar(30) NULL DEFAULT NULL,
             `revision` INT UNSIGNED NOT NULL DEFAULT '0',
             `revision_changed_at` BIGINT UNSIGNED NULL DEFAULT NULL,
+            `api_idempotency_id` BIGINT UNSIGNED NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `restricted_inactif_idx` (`restricted_to`,`inactif`),
             INDEX items_perso_id_idx (`perso`, `id`),
-            INDEX idx_items_tree_inactif_deleted (`id_tree`, `inactif`, `deleted_at`)
+            INDEX idx_items_tree_inactif_deleted (`id_tree`, `inactif`, `deleted_at`),
+            UNIQUE KEY `uq_items_api_idempotency` (`api_idempotency_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
         );
     }
@@ -788,7 +790,15 @@ class DatabaseInstaller
             // Kill switch of the emails customization layer. Set to 0 to ignore
             // every stored template without deleting them.
             array('admin', 'emails_templates_enabled', '1'),
-            array('admin', 'offline_sync_window_days', '90')
+            array('admin', 'offline_sync_window_days', '90'),
+            // Self-service licence trial. All three are caches or local state; the licence
+            // server remains the authority on what was really granted.
+            array('admin', 'licence_trial_state', ''),
+            array('admin', 'licence_server_discovery', ''),
+            array('admin', 'licence_info_budget', ''),
+            // Staging escape hatch, not exposed in the interface. Empty means the production
+            // licence server.
+            array('admin', 'licence_server_base_url', '')
         );
         foreach ($aMiscVal as $elem) {
             $value = isset($elem[3]) ? $elem[3] : 0;
@@ -2393,6 +2403,34 @@ class DatabaseInstaller
         KEY `idx_items_revisions_changed_at` (`changed_at`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     COMMENT='Item change journal feeding the offline synchronization delta feed'"
+        );
+    }
+
+    // Create table api_idempotency
+    private function api_idempotency()
+    {
+        DB::query(
+            'CREATE TABLE IF NOT EXISTS `' . $this->inputData['tablePrefix'] . "api_idempotency` (
+        `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        `user_id` INT UNSIGNED NOT NULL,
+        `operation` VARCHAR(50) NOT NULL,
+        `key_hash` CHAR(64) NOT NULL,
+        `request_fingerprint` CHAR(64) NOT NULL,
+        `status` ENUM('processing', 'completed') NOT NULL DEFAULT 'processing',
+        `owner_token_hash` CHAR(64) NOT NULL,
+        `resource_id` INT UNSIGNED NULL DEFAULT NULL,
+        `http_status` SMALLINT UNSIGNED NULL DEFAULT NULL,
+        `response_body` TEXT NULL DEFAULT NULL,
+        `created_at` BIGINT UNSIGNED NOT NULL,
+        `updated_at` BIGINT UNSIGNED NOT NULL,
+        `locked_until` BIGINT UNSIGNED NOT NULL DEFAULT '0',
+        `expires_at` BIGINT UNSIGNED NOT NULL,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `uq_api_idempotency_identity` (`user_id`, `operation`, `key_hash`),
+        KEY `idx_api_idempotency_cleanup` (`status`, `expires_at`, `locked_until`),
+        KEY `idx_api_idempotency_resource` (`operation`, `resource_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    COMMENT='Replay-safe metadata for idempotent API mutations'"
         );
     }
 

@@ -48,8 +48,23 @@ LABEL maintainer="TeamPass <nils@teampass.net>" \
 # used to be labelled "master"). The default only serves local builds, so it must stay
 # equal to TP_VERSION.TP_VERSION_MINOR; the release procedure bumps it in the same
 # commit as the version constants.
-ARG TEAMPASS_VERSION=3.2.2.3
+ARG TEAMPASS_VERSION=3.2.2.4
 ENV TEAMPASS_VERSION=${TEAMPASS_VERSION}
+
+# Apply the Alpine security updates published since the base image was built.
+#
+# openssl and curl are not installed below - they come with php:8.3-fpm-alpine3.24 - so
+# nothing here ever refreshed them, and the image shipped whatever the base image froze.
+# That is what accumulated as Trivy alerts (libcrypto3/libssl3/openssl and curl/libcurl),
+# all of them fixed upstream in the very branch the image already tracks.
+#
+# The trade-off is deliberate: the build stops being byte-reproducible across time, in
+# exchange for never publishing an image with known-vulnerable OS packages. Pinning the
+# fixed versions instead would keep reproducibility but has to be edited at every CVE.
+#
+# Placed AFTER the version ARG on purpose: that argument changes at every release, so this
+# layer is invalidated with it and a release build always resolves fresh packages.
+RUN apk upgrade --no-cache
 
 # Install system dependencies and PHP extensions
 RUN apk add --no-cache \

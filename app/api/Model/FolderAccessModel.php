@@ -443,4 +443,77 @@ class FolderAccessModel
             AND other_personal.title <> ' . DB::escape((string) $userId) . '
         )';
     }
+
+    /**
+     * SQL predicate enforcing the item-level restriction on a list query.
+     *
+     * An item can be narrowed after creation to a subset of users (items.restricted_to) or of
+     * roles (restriction_to_roles). Folder membership and the presence of a sharekey do NOT
+     * express that: restricting an item never revokes the sharekey the excluded user already
+     * holds, so without this predicate the API served secrets the web refused
+     * (GHSA-gxc6-rgv6-wx99).
+     *
+     * The decision itself lives in item_restriction_logic.php, shared with the web paths so the
+     * two cannot drift again. Roles are read live from the database rather than from the JWT
+     * 'roles' claim: the claim is frozen until the token expires (up to 24h), so a role removed
+     * from a user would keep satisfying a role restriction.
+     *
+     * Fails closed. AND it with the caller's own folder authorization, never in place of it.
+     *
+     * @param string $itemAlias SQL alias of the items table in the caller's query (e.g. 'i')
+     * @param int    $userId    Current user ID
+     * @return string Clause starting with ' AND '
+     */
+    public function getItemRestrictionSqlConstraint(string $itemAlias, int $userId): string
+    {
+        if ($userId <= 0) {
+            return ' AND 1 = 0';
+        }
+
+        return ' AND ' . itemRestrictionSqlPredicate(
+            $userId,
+            // Canonical memoised reader of the roles a user holds, both sources (manual and
+            // AD/LDAP) — same one every other authorization predicate uses.
+            securityPostureUserRoleIds($userId),
+            $itemAlias,
+            prefixTable('restriction_to_roles')
+        );
+    }
+
+    /**
+     * Row form of the same check, for the endpoints that address a single item.
+     *
+     * @param int $itemId Item to test
+     * @param int $userId Current user ID
+     * @return bool True when the item's restrictions let this user through
+     */
+    public function satisfiesItemRestriction(int $itemId, int $userId): bool
+    {
+        if ($itemId <= 0 || $userId <= 0) {
+            return false;
+        }
+
+        $itemRow = DB::queryFirstRow(
+            'SELECT restricted_to FROM ' . prefixTable('items') . ' WHERE id = %i',
+            $itemId
+        );
+        if ($itemRow === null) {
+            return false;
+        }
+
+        $itemRoleIds = array_map(
+            'intval',
+            DB::queryFirstColumn(
+                'SELECT role_id FROM ' . prefixTable('restriction_to_roles') . ' WHERE item_id = %i',
+                $itemId
+            )
+        );
+
+        return itemRestrictionAllows(
+            $itemRow['restricted_to'] === null ? null : (string) $itemRow['restricted_to'],
+            $itemRoleIds,
+            $userId,
+            securityPostureUserRoleIds($userId)
+        );
+    }
 }

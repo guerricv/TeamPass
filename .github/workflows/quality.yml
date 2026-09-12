@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PHP_EXTENSIONS: openssl, mysqli, mbstring, bcmath, iconv, xml, gd, curl, gmp, ldap
+  PHP_EXTENSIONS: openssl, mysqli, mbstring, bcmath, iconv, xml, gd, curl, gmp, ldap, sqlite3
 
 jobs:
   autoloader-guard:
@@ -98,6 +98,20 @@ jobs:
 
       - name: Run the test suite
         run: php app/vendor/phpunit/phpunit/phpunit --colors=never
+
+  javascript-tests:
+    name: JavaScript tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run JavaScript regression tests
+        run: node --test tests/JavaScript/*.test.cjs
 
   static-analysis:
     name: PHPStan (level 4)

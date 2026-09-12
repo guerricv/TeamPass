@@ -26,7 +26,6 @@
  * @see       https://www.teampass.net
  */
 
-use TeampassClasses\NestedTree\NestedTree;
 
 // Load config
 require_once __DIR__.'/../config/include.php';
@@ -149,179 +148,20 @@ function provideLog(string $message, array $SETTINGS)
     }
 }
 
-function performVisibleFoldersHtmlUpdate (int $user_id)
-{
-    $html = [];
-
-    // rebuild tree
-    $tree = new NestedTree(prefixTable('nested_tree'), 'id', 'parent_id', 'title');
-    $tree->rebuild();
-
-    // get current folders visible for user
-    $cache_tree = DB::queryFirstRow(
-        'SELECT increment_id, data FROM ' . prefixTable('cache_tree') . ' WHERE user_id = %i',
-        $user_id
-    );
-
-    // Check if cache exists and has data
-    $folders = null;
-    if (!empty($cache_tree) && !empty($cache_tree['data']) && $cache_tree['data'] !== '[]' && $cache_tree['data'] !== '[{}]') {
-        $folders = json_decode($cache_tree['data'], true);
-    }
-
-    // If no cache data exists, build visible folders from user's roles
-    if (empty($folders) || !is_array($folders)) {
-        $visibleFolderIds = buildUserVisibleFolderIds($user_id, $tree);
-
-        foreach ($visibleFolderIds as $folderId) {
-            // Get path
-            $path = '';
-            $tree_path = $tree->getPath($folderId, false);
-            foreach ($tree_path as $fld) {
-                $path .= empty($path) === true ? $fld->title : '/'.$fld->title;
-            }
-
-            // get folder info
-            $folderInfo = DB::queryFirstRow(
-                'SELECT title, parent_id, personal_folder FROM ' . prefixTable('nested_tree') . ' WHERE id = %i',
-                $folderId
-            );
-
-            if ($folderInfo) {
-                $html[] = [
-                    "id" => $folderId,
-                    "level" => count($tree_path),
-                    "title" => $folderInfo['title'],
-                    "disabled" => 0,
-                    "parent_id" => $folderInfo['parent_id'],
-                    "perso" => $folderInfo['personal_folder'],
-                    "path" => $path,
-                    "is_visible_active" => 1,
-                ];
-            }
-        }
-    } else {
-        // Use existing cache data
-        foreach ($folders as $folder) {
-            if (!isset($folder['id'])) continue;
-
-            $idFolder = is_numeric($folder['id']) ? (int) $folder['id'] : (int) explode("li_", $folder['id'])[1];
-
-            // Get path
-            $path = '';
-            $tree_path = $tree->getPath($idFolder, false);
-            foreach ($tree_path as $fld) {
-                $path .= empty($path) === true ? $fld->title : '/'.$fld->title;
-            }
-
-            // get folder info
-            $folderInfo = DB::queryFirstRow(
-                'SELECT title, parent_id, personal_folder FROM ' . prefixTable('nested_tree') . ' WHERE id = %i',
-                $idFolder
-            );
-
-            if ($folderInfo) {
-                $html[] = [
-                    "id" => $idFolder,
-                    "level" => count($tree_path),
-                    "title" => $folderInfo['title'],
-                    "disabled" => 0,
-                    "parent_id" => $folderInfo['parent_id'],
-                    "perso" => $folderInfo['personal_folder'],
-                    "path" => $path,
-                    "is_visible_active" => 1,
-                ];
-            }
-        }
-    }
-
-    // Update or insert cache_tree entry
-    if (!empty($cache_tree) && isset($cache_tree['increment_id'])) {
-        DB::update(
-            prefixTable('cache_tree'),
-            array(
-                'visible_folders' => json_encode($html),
-                'timestamp' => time(),
-            ),
-            'increment_id = %i',
-            intval($cache_tree['increment_id'])
-        );
-    } else {
-        // Create new cache_tree entry for this user
-        DB::insert(
-            prefixTable('cache_tree'),
-            array(
-                'user_id' => $user_id,
-                'data' => '[]',
-                'visible_folders' => json_encode($html),
-                'timestamp' => time(),
-            )
-        );
-    }
-}
-
 /**
- * Build list of visible folder IDs for a user based on their roles
- * This is used when no cache exists (e.g., for newly created users)
+ * Invalidate a user's folder views for the legacy user_build_cache_tree task.
  *
- * @param int $user_id User ID
- * @param NestedTree $tree Tree object
- * @return array Array of visible folder IDs
+ * The request handlers rebuild the tree and dropdowns with current permissions.
+ * A background update of visible_folders alone used to revalidate stale data
+ * through the shared timestamp, even when the scheduler was working correctly.
+ *
+ * @param int $user_id User whose folder cache must be refreshed
+ * @return void
  */
-function buildUserVisibleFolderIds(int $user_id, $tree): array
+function performVisibleFoldersHtmlUpdate(int $user_id): void
 {
-    $visibleFolders = [];
-
-    // Get user's roles
-    $userRoles = DB::queryFirstColumn(
-        'SELECT role_id FROM ' . prefixTable('users_roles') . ' WHERE user_id = %i',
-        $user_id
-    );
-
-    if (empty($userRoles)) {
-        return $visibleFolders;
-    }
-
-    // Get folders accessible via roles
-    $roleFolders = DB::query(
-        'SELECT DISTINCT folder_id FROM ' . prefixTable('roles_values') . ' WHERE role_id IN %ls AND type IN %ls',
-        $userRoles,
-        ['W', 'ND', 'NE', 'NDNE', 'R']
-    );
-
-    foreach ($roleFolders as $row) {
-        $visibleFolders[] = intval($row['folder_id']);
-    }
-
-    // Get folders directly allowed to the user via users_groups
-    $userGroups = DB::queryFirstColumn(
-        'SELECT group_id FROM ' . prefixTable('users_groups') . ' WHERE user_id = %i',
-        $user_id
-    );
-
-    foreach ($userGroups as $groupId) {
-        $visibleFolders[] = intval($groupId);
-    }
-
-    // Get user's personal folder if it exists
-    $personalFolder = DB::queryFirstRow(
-        'SELECT id FROM ' . prefixTable('nested_tree') . ' WHERE title = %s AND personal_folder = 1',
-        (string) $user_id
-    );
-
-    if (!empty($personalFolder)) {
-        $visibleFolders[] = intval($personalFolder['id']);
-
-        // Get all descendants of personal folder
-        $descendants = $tree->getDescendants($personalFolder['id'], false, false, true);
-        foreach ($descendants as $descId) {
-            $visibleFolders[] = (int) $descId;
-        }
-    }
-
-    return array_unique($visibleFolders);
+    invalidateUserFolderCache([$user_id]);
 }
-
 
 function subTaskStatus($taskId)
 {
