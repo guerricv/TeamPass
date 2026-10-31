@@ -4292,7 +4292,7 @@ switch ($inputData['type']) {
             // get OTV links
             if (isset($SETTINGS['otv_is_enabled']) === true && (int) $SETTINGS['otv_is_enabled'] === 1) {
                 $returnArray['otv_links'] = secureSendCountActiveLinks(
-                    $SETTINGS, (int) $session->get('user-id'), (int) $inputData['id']
+                    $SETTINGS, null, (int) $inputData['id']
                 );
             }
 

@@ -96,6 +96,32 @@ class SecureSendActiveLinksTest extends TestCase
         }
     }
 
+    public function testItemDetailsCountIncludesEverySenderOnTheSameItem(): void
+    {
+        DB::$folders[43] = [7, 8];
+        $expiry = time() + 3600;
+        $this->link(1, ['time_limit' => $expiry]);
+        $this->link(2, ['originator' => 43, 'time_limit' => $expiry]);
+        $this->link(3, ['originator' => 43, 'item_id' => 124, 'time_limit' => $expiry]);
+        $this->link(4, ['originator' => 43, 'views' => 2, 'time_limit' => $expiry]);
+        $this->link(5, ['originator' => 43, 'time_limit' => time() - 1]);
+        $this->link(6, ['originator' => 43, 'send_type' => 'note', 'time_limit' => $expiry]);
+        $source = file_get_contents(__DIR__ . '/../../app/sources/items.queries.php');
+        $start = strpos($source, '// get OTV links');
+        $end = strpos($source, "\$session->set('system-show_step2'", $start);
+        $handler = substr($source, $start, $end - $start);
+        $SETTINGS = $this->settings;
+        $inputData = ['id' => 123];
+        $returnArray = [];
+        $session = new class {
+            public function get(string $name): int { return 42; }
+        };
+        eval($handler);
+        self::assertSame(2, $returnArray['otv_links']);
+        self::assertSame(1, secureSendCountActiveLinks($SETTINGS, 42, 123));
+        self::assertStringNotContainsString('i.label', implode(' ', DB::$queries));
+    }
+
     public function testDisabledDeletedAndMissingSendersAndUnavailableItemsAreExcluded(): void
     {
         $this->link();

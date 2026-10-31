@@ -1211,9 +1211,10 @@ meet the current passphrase requirement. Item links additionally require the
 sender's current access to an active item and an unexhausted automatic-deletion
 policy when that feature is enabled.
 
-The sender's list and per-item counter use this same definition and only include
-that sender's links. Exhausted links are excluded immediately, even while their
-encrypted database rows await cleanup. Counting reads metadata without decrypting
+The personal list and count include only that sender's links. The per-item counter
+counts usable links from every sender on that item. Exhausted links are excluded
+immediately, even while their encrypted database rows await cleanup. Counting
+reads metadata without decrypting
 content, consuming views, deleting rows or adding audit events. Link state is
 observed at refresh time; it is separate from historical audit event statistics.
 
