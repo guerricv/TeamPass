@@ -1233,8 +1233,9 @@ Item labels link to the item in its current folder using the normal authenticate
 item page; access is checked again when it is opened. Standalone notes have no
 source item and remain plain text. Navigation never uses the recipient's sharing URL.
 
-The personal count refreshes on page load, after creation/revocation, when the
-page regains focus, and every minute while visible and the modal is closed.
+The personal count refreshes on page load, after creation/revocation, and when the
+page regains focus or becomes visible, while the modal is closed. No periodic
+polling runs.
 The list loads once on each opening and stays stable while being read. Revocation
 uses a confirmation view in the TeamPass dialog; cancelling restores the list's
 scroll position, and success removes only that row without reloading the list.

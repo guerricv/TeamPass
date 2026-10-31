@@ -286,7 +286,6 @@ $(function () {
     $(document).on('tp-secure-send-changed', function (event, source) { if (source !== 'global') refreshCount(true) })
     $(document).on('visibilitychange', function () { refreshCount(false) })
     $(window).on('focus', function () { refreshCount(false) })
-    window.setInterval(function () { refreshCount(false) }, 60000)
     refreshCount(true)
 })
 </script>

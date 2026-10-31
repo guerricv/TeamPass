@@ -67,7 +67,7 @@ function harness() {
       if (failed) request.failure?.(); else request.success?.(data)
       request.finished?.()
     },
-    advance() { now += 60000; timers[0]() },
+    advance() { now += 60000; timers.forEach(fn => fn()) },
     revoke(index = 0) { node('#tp-my-sends-list').children[index].children.at(-1).trigger('click') },
     confirm() { node('#tp-my-sends-revoke-confirm').trigger('click') },
     cancel() { node('#tp-my-sends-revoke-cancel').trigger('click') },
@@ -92,9 +92,28 @@ test('only counts are loaded before opening; zero and large counts have accessib
   assert.equal(h.node('#tp-secure-send-badge').properties.hidden, true)
   assert.match(h.node('#tp-navbar-secure-send').attrs['aria-label'], /Active: 0/)
   h.advance()
+  h.node(h.window).trigger('focus')
   h.reply(1, count(150))
   assert.equal(h.node('#tp-secure-send-badge').value, '99+')
   assert.match(h.node('#tp-navbar-secure-send').attrs.title, /Active: 150/)
+})
+
+test('elapsed time never polls the badge; focus and visibility refresh it on demand', () => {
+  const h = harness()
+  assert.equal(h.timers.length, 0)
+  h.reply(0, count(1))
+  h.advance()
+  h.advance()
+  assert.equal(h.requests.length, 1)
+  h.node(h.window).trigger('focus')
+  assert.equal(h.requests.at(-1).options.data.type, 'count_secure_sends')
+  h.reply(1, count(2))
+  h.advance()
+  assert.equal(h.requests.length, 2)
+  h.node(h.document).trigger('visibilitychange')
+  assert.equal(h.requests.at(-1).options.data.type, 'count_secure_sends')
+  h.reply(2, count(3))
+  assert.equal(h.node('#tp-secure-send-badge').value, '3')
 })
 
 test('opening reloads the list and renders labels and metadata exclusively as text', () => {
@@ -187,17 +206,19 @@ test('empty inventory, malformed payloads and network errors remain distinct and
   assert.equal(h.node('#tp-my-sends-list').children.length, 0)
 })
 
-test('disabling the feature hides the entry, clears labels and stops polling', () => {
+test('disabling the feature hides the entry, clears labels and stops future count requests', () => {
   const h = harness()
   h.open()
   h.reply(1, { error: '', enabled: false, sends: [] })
   assert.equal(h.node('#tp-secure-send-nav').properties.hidden, true)
   assert.equal(h.node('#tp-my-sends-list').children.length, 0)
   h.advance()
+  h.node(h.window).trigger('focus')
+  h.node(h.document).trigger('tp-secure-send-changed', ['items'])
   assert.equal(h.requests.length, 2)
 })
 
-test('hidden pages do not poll; the closed badge refreshes and open dialogs stay stable', () => {
+test('visibility and change events refresh the closed badge while open dialogs stay stable', () => {
   const h = harness()
   h.document.hidden = true
   h.advance()
