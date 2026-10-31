@@ -122,6 +122,33 @@ class SecureSendActiveLinksTest extends TestCase
         self::assertStringNotContainsString('i.label', implode(' ', DB::$queries));
     }
 
+    public function testPausedPoliciesKeepOwnedLinksListedWhileCountsRemainStrict(): void
+    {
+        $this->link(1);
+        $this->link(2, ['has_passphrase' => 1, 'protected_key' => 'wrapped']);
+        $this->link(3, ['send_type' => 'note', 'item_id' => null]);
+        $this->link(4, ['send_type' => 'note', 'item_id' => null, 'has_passphrase' => 1, 'protected_key' => 'wrapped']);
+        $this->link(5, ['views' => 2]);
+        $this->link(6, ['failed_attempts' => 5]);
+        $this->link(7, ['time_limit' => 1000]);
+        $this->link(8, ['has_passphrase' => 1]);
+        $this->link(9, ['originator' => 43, 'item_id' => 124]);
+        $this->link(10, ['item_id' => 124]);
+        $policy = array_replace($this->settings, ['secure_send_allow_notes' => 0, 'secure_send_require_passphrase' => 1]);
+        $listing = secureSendActiveLinks($policy, 42, null, 1000, true);
+        self::assertSame([4, 3, 2, 1], array_column($listing, 'id'));
+        self::assertSame([true, true, false, true], array_column($listing, 'suspended'));
+        self::assertSame(1, secureSendCountActiveLinks($policy, 42, null, 1000));
+        self::assertSame(1, secureSendCountActiveLinks($policy, null, null, 1000));
+        self::assertSame(1, secureSendCountActiveLinks($policy, null, 123, 1000));
+        $resumed = secureSendActiveLinks($this->settings, 42, null, 1000, true);
+        self::assertSame([4, 3, 2, 1], array_column($resumed, 'id'));
+        self::assertSame([false, false, false, false], array_column($resumed, 'suspended'));
+        self::assertSame(4, secureSendCountActiveLinks($this->settings, 42, null, 1000));
+        self::assertSame(10, DB::$connection->querySingle('SELECT COUNT(*) FROM active_fixture_otv'));
+        self::assertStringNotContainsString('canary', json_encode($listing));
+    }
+
     public function testDisabledDeletedAndMissingSendersAndUnavailableItemsAreExcluded(): void
     {
         $this->link();
@@ -233,6 +260,7 @@ class SecureSendActiveLinksTest extends TestCase
         }
         self::assertSame('', $response['error']);
         self::assertSame([5, 3, 1], array_column($response['sends'], 'id'));
+        self::assertSame([false, false, false], array_column($response['sends'], 'suspended'));
         foreach ([$response['sends'][0], $response['sends'][2]] as $send) {
             self::assertSame('item', $send['send_type']);
             self::assertSame(123, $send['item_id']);
@@ -243,6 +271,17 @@ class SecureSendActiveLinksTest extends TestCase
         self::assertNull($response['sends'][1]['item_id']);
         self::assertNull($response['sends'][1]['folder_id']);
         self::assertStringNotContainsString('canary', json_encode($response));
+        $SETTINGS['secure_send_allow_notes'] = 0;
+        $SETTINGS['secure_send_require_passphrase'] = 1;
+        ob_start();
+        try {
+            eval('switch (true) { case true: ' . $handler . ' }');
+            $pausedResponse = json_decode(ob_get_contents(), true, 512, JSON_THROW_ON_ERROR);
+        } finally {
+            ob_end_clean();
+        }
+        self::assertSame([5, 3, 1], array_column($pausedResponse['sends'], 'id'));
+        self::assertSame([true, true, true], array_column($pausedResponse['sends'], 'suspended'));
     }
 
     public function testCountHandlerUsesSessionScopeAndRejectsIncorrectKeys(): void

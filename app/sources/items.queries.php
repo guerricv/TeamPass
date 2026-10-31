@@ -7535,6 +7535,7 @@ switch ($inputData['type']) {
                     ? $lang->get('secure_send_note')
                     : $secureSendRow['item_label'],
                 'has_passphrase' => (int) ($secureSendRow['has_passphrase'] ?? 0),
+                'suspended' => $secureSendRow['suspended'],
                 'remaining_views' => max(0, (int) $secureSendRow['max_views'] - (int) $secureSendRow['views']),
                 'expires_at' => (int) $secureSendRow['time_limit'],
                 'expires_label' => date($SETTINGS['date_format'] . ' ' . $SETTINGS['time_format'], (int) $secureSendRow['time_limit']),
@@ -7552,11 +7553,6 @@ switch ($inputData['type']) {
         // Check KEY
         if ($inputData['key'] !== $session->get('key')) {
             echo '[ { "error" : "key_not_conform" } ]';
-            break;
-        }
-
-        if ((int) ($SETTINGS['otv_is_enabled'] ?? 0) !== 1) {
-            echo json_encode(['error' => 'disabled', 'enabled' => false]);
             break;
         }
 

@@ -1227,9 +1227,19 @@ is displayed as unavailable rather than as zero.
 Authenticated non-administrator users have a paper-plane icon in the top bar on
 every page while Secure Send is enabled. Its badge counts only their own active
 links. Opening it lists their item links and standalone notes with expiration,
-remaining views and passphrase protection. Revocation requires confirmation and
-uses the existing owner-checked, transactionally audited operation. Neither the
-modal nor the counter requires permission to create standalone notes.
+remaining views and passphrase protection. Both personal lists retain unexpired,
+unexhausted links paused by the note-sharing or mandatory-passphrase settings,
+with a suspension badge and a working Revoke button. Relaxing those settings can
+make retained links usable again. Suspended links do not contribute to the top-bar
+badge, modal summary, statistics or item count. Expired, exhausted, locked-out,
+invalid or unauthorized links remain excluded.
+
+Revocation requires confirmation and uses the existing owner-checked,
+transactionally audited operation. Neither the modal nor the counter requires
+permission to create standalone notes.
+The revocation endpoint remains available to the authenticated owner even while
+Secure Send is disabled globally; feature gating still hides the entry points and
+prevents creation and reveal.
 Item labels link to the item in its current folder using the normal authenticated
 item page; access is checked again when it is opened. Standalone notes have no
 source item and remain plain text. Navigation never uses the recipient's sharing URL.

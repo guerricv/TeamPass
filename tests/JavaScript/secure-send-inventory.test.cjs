@@ -193,7 +193,8 @@ test('empty inventory, malformed payloads and network errors remain distinct and
   h.open()
   h.reply(1, list([]))
   assert.equal(h.node('#tp-my-sends-status').value, 'secure_send_no_active')
-  for (const payload of [list([send({ remaining_views: 0 })]), list([send({ id: '7' })]), { error: 'server_error' }, null]) {
+  for (const payload of [list([send({ remaining_views: 0 })]), list([send({ id: '7' })]),
+    list([send({ suspended: 'true' })]), list([send({ suspended: null })]), { error: 'server_error' }, null]) {
     h.close()
     h.open()
     h.reply(h.requests.length - 1, payload)
@@ -306,6 +307,43 @@ test('revoking the last link displays the empty state without a new list request
   assert.equal(h.node('#tp-secure-send-badge').properties.hidden, true)
   assert.equal(h.node('#tp-my-sends-status').value, 'secure_send_no_active')
   assert.equal(h.focused, h.node('#tp-my-sends-close'))
+})
+
+test('suspended links stay visible and revocable without contributing to the badge or summary', () => {
+  const h = harness()
+  h.open()
+  h.reply(1, list([send({ suspended: false }), send({ id: 8, send_type: 'note', suspended: true }), send({ id: 9, suspended: true })]))
+  assert.equal(h.node('#tp-my-sends-list').children.length, 3)
+  assert.equal(h.node('#tp-secure-send-badge').value, '1')
+  assert.equal(h.node('#tp-my-sends-summary').value, 'Active: 1')
+  assert.equal(h.createdNodes().filter(n => n.value === 'secure_send_suspended').length, 2)
+  h.revoke(1)
+  h.confirm()
+  assert.equal(h.requests[2].options.data.data, '{"id":8}')
+  h.reply(2, { error: '', id: 8 })
+  assert.equal(h.node('#tp-secure-send-badge').value, '1')
+  h.revoke(0)
+  h.confirm()
+  h.reply(3, { error: '', id: 7 })
+  assert.equal(h.node('#tp-my-sends-list').children.length, 1)
+  assert.equal(h.node('#tp-secure-send-badge').value, '0')
+  assert.equal(h.node('#tp-secure-send-badge').properties.hidden, true)
+  assert.equal(h.node('#tp-my-sends-summary').value, 'Active: 0')
+  assert.equal(h.node('#tp-my-sends-status').value, '')
+  h.revoke(0)
+  h.confirm()
+  h.reply(4, { error: '', id: 9 })
+  assert.equal(h.node('#tp-my-sends-status').value, 'secure_send_no_active')
+  assert.equal(h.requests.length, 5)
+})
+
+test('an inventory containing only suspended links is not presented as an empty list', () => {
+  const h = harness()
+  h.open()
+  h.reply(1, list([send({ suspended: true })]))
+  assert.equal(h.node('#tp-my-sends-list').children.length, 1)
+  assert.equal(h.node('#tp-my-sends-summary').value, 'Active: 0')
+  assert.equal(h.node('#tp-my-sends-status').value, '')
 })
 
 test('a failed revocation preserves the list and leaves an enabled cancel action', () => {

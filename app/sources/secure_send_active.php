@@ -7,22 +7,25 @@ declare(strict_types=1);
  * This file is part of the TeamPass project, distributed under the GNU GPL-3.0.
  * Copyright 2009-2026 Teampass.net. See <https://www.gnu.org/licenses/>.
  *
- * Read-only inventory of currently usable Secure Send links.
+ * Read-only usable-link counts and personal management inventory.
  */
 
 /**
- * Read active link metadata under each sender's current access rights.
+ * Read link metadata under each sender's current access rights.
  *
  * The caller enforces session/page permissions and derives the personal scope from
- * the session. A null originator is reserved for the administrator's global count.
+ * the session. A null originator is used for the administrator's global count or
+ * an already authorized item-wide count.
  * No payload, URL credential, encryption key or item secret is selected. Item access
  * is resolved once per sender, rather than once for every outstanding link.
+ * Personal listings retain links suspended by the note/passphrase settings so the
+ * sender can revoke them. Counts include only links that are currently usable.
  *
  * @param array $settings Current application settings
- * @param int|null $originatorId Authenticated sender, or null for the global inventory
+ * @param int|null $originatorId Authenticated sender, or null for global/item-wide counts
  * @param int|null $itemId Optional item scope (never includes standalone notes)
  * @param int|null $now Observation timestamp
- * @param bool $withLabels Include authorized item labels and folder IDs for the sender's list
+ * @param bool $withLabels Personal management mode with labels, folder IDs and suspension state
  * @return array<int,array<string,mixed>> Active metadata, newest first
  */
 function secureSendActiveLinks(
@@ -47,10 +50,10 @@ function secureSendActiveLinks(
         AND (o.has_passphrase <> 1 OR (o.protected_key IS NOT NULL AND o.protected_key <> ''))
         AND u.disabled = 0 AND u.deleted_at IS NULL";
     $parameters = [$now];
-    if ((int) ($settings['secure_send_allow_notes'] ?? 0) !== 1) {
+    if (!$withLabels && (int) ($settings['secure_send_allow_notes'] ?? 0) !== 1) {
         $where .= " AND o.send_type <> 'note'";
     }
-    if ((int) ($settings['secure_send_require_passphrase'] ?? 0) === 1) {
+    if (!$withLabels && (int) ($settings['secure_send_require_passphrase'] ?? 0) === 1) {
         $where .= ' AND o.has_passphrase = 1';
     }
     if ($originatorId !== null) {
@@ -105,6 +108,10 @@ function secureSendActiveLinks(
                 $row['folder_id'] = (int) $item['id_tree'];
             }
         }
+        if ($withLabels) {
+            $row['suspended'] = ($row['send_type'] === 'note' && (int) ($settings['secure_send_allow_notes'] ?? 0) !== 1)
+                || ((int) ($settings['secure_send_require_passphrase'] ?? 0) === 1 && (int) $row['has_passphrase'] !== 1);
+        }
         unset($row['sender_admin']);
         $active[] = $row;
     }
@@ -115,7 +122,7 @@ function secureSendActiveLinks(
  * Count currently usable links without loading labels or decrypted content.
  *
  * @param array $settings Current application settings
- * @param int|null $originatorId Authenticated sender, or null for the admin-only total
+ * @param int|null $originatorId Authenticated sender, or null for global/item-wide counts
  * @param int|null $itemId Optional item scope
  * @param int|null $now Observation timestamp
  * @return int Active links at the observation time
