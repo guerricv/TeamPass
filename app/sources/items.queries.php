@@ -7475,7 +7475,7 @@ switch ($inputData['type']) {
 
     /*
      * CASE
-     * List the current user's active Secure Send links (My secure sends)
+     * Count the current user's usable Secure Send links
      */
     case 'count_secure_sends':
         if (!hash_equals((string) $session->get('key'), (string) $inputData['key'])) {
@@ -7492,6 +7492,10 @@ switch ($inputData['type']) {
         }
         break;
 
+    /*
+     * CASE
+     * List the current user's Secure Send links (My secure sends)
+     */
     case 'list_secure_sends':
         // Check KEY
         if ($inputData['key'] !== $session->get('key')) {
