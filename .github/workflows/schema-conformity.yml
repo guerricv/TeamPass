@@ -1,0 +1,48 @@
+name: Database schema conformity
+
+on:
+  pull_request:
+    branches: [master, develop]
+  push:
+    branches: [master, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema:
+    name: Schema reference (${{ matrix.database }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        database: ['mariadb:10.11', 'mysql:8.0']
+    services:
+      database:
+        image: ${{ matrix.database }}
+        env:
+          MYSQL_ROOT_PASSWORD: test-only-password
+          MYSQL_DATABASE: tp_schema_reference_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -ptest-only-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mysqli
+          coverage: none
+      - name: Compare fresh installation metadata and detect deliberate drift
+        env:
+          TP_SCHEMA_DATABASE: tp_schema_reference_ci
+          TP_SCHEMA_HOST: 127.0.0.1
+          TP_SCHEMA_USER: root
+          TP_SCHEMA_PASSWORD: test-only-password
+        run: php tests/Integration/database_schema.php
