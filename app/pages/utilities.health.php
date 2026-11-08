@@ -672,6 +672,32 @@ header('Cache-Control: no-cache, no-store, must-revalidate');
 
                     <!-- DATABASE -->
                     <div class="tab-pane fade" id="health-database" role="tabpanel" aria-labelledby="tab-health-database">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title"><i class="fas fa-check-double mr-2"></i><?php echo htmlspecialchars($lang->get('health_schema_title'), ENT_QUOTES, 'UTF-8'); ?></h3>
+                                <div class="card-tools">
+                                    <button type="button" class="btn btn-sm btn-primary" id="health-schema-check"><i class="fas fa-search mr-1"></i><?php echo htmlspecialchars($lang->get('health_schema_check'), ENT_QUOTES, 'UTF-8'); ?></button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted"><?php echo htmlspecialchars($lang->get('health_schema_description'), ENT_QUOTES, 'UTF-8'); ?></p>
+                                <div id="health-schema-summary" role="status" aria-live="polite"><?php echo htmlspecialchars($lang->get('health_schema_not_checked'), ENT_QUOTES, 'UTF-8'); ?></div>
+                                <div id="health-schema-meta" class="small text-muted mt-2"></div>
+                                <div class="table-responsive mt-3" id="health-schema-results" hidden>
+                                    <table class="table table-sm table-striped">
+                                        <thead><tr>
+                                            <th><?php echo htmlspecialchars($lang->get('health_status'), ENT_QUOTES, 'UTF-8'); ?></th>
+                                            <th><?php echo htmlspecialchars($lang->get('health_table'), ENT_QUOTES, 'UTF-8'); ?></th>
+                                            <th><?php echo htmlspecialchars($lang->get('health_schema_object'), ENT_QUOTES, 'UTF-8'); ?></th>
+                                            <th><?php echo htmlspecialchars($lang->get('health_schema_difference'), ENT_QUOTES, 'UTF-8'); ?></th>
+                                            <th><?php echo htmlspecialchars($lang->get('health_schema_expected'), ENT_QUOTES, 'UTF-8'); ?></th>
+                                            <th><?php echo htmlspecialchars($lang->get('health_schema_actual'), ENT_QUOTES, 'UTF-8'); ?></th>
+                                        </tr></thead>
+                                        <tbody id="health-schema-issues"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
                         <div class="row">
                             <div class="col-md-4 col-12">
                                 <div class="small-box bg-info">

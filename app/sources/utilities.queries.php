@@ -866,6 +866,21 @@ logItems(
                 'encode'
             );
             break;
+        case 'health_check_database_schema':
+            if ($post_key !== $session->get('key') || $checkUserAccess->userAccessPage('utilities.health') === false) {
+                echo prepareExchangedData(['error' => true, 'message' => $lang->get('error_not_allowed_to')], 'encode');
+                break;
+            }
+            require_once __DIR__ . '/database_schema.php';
+            $schemaReport = tpSchemaReport(
+                static function (string $sql): array { return DB::query($sql); },
+                (string) DB_PREFIX,
+                TEAMPASS_ROOT . '/app/config/database_schema.json',
+                TP_VERSION . '.' . TP_VERSION_MINOR
+            );
+            echo prepareExchangedData(['error' => false, 'report' => $schemaReport], 'encode');
+            break;
+
         //CASE system health report
         case 'get_health_report':
             // Check KEY

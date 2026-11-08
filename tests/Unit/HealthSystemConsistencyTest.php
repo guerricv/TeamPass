@@ -62,6 +62,7 @@ class HealthSystemConsistencyTest extends TestCase
     {
         foreach (array(
             'get_health_report',
+            'health_check_database_schema',
             'health_scan_corrupted_items',
             'health_get_corrupted_items_list',
             'health_check_runtime_logs',

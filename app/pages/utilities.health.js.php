@@ -85,6 +85,16 @@ var tpFileIntegrityOffset = 0;
 var tpFileIntegrityLimit = 100;
 var tpFileIntegrityPollTimer = null;
 
+var tpSchemaL10n = <?php
+$schemaLabels = [];
+foreach (['running', 'success', 'warning', 'danger', 'unavailable', 'meta', 'missing_table', 'extra_table',
+    'missing_column', 'extra_column', 'column_type', 'column_nullable', 'column_default', 'column_extra',
+    'column_collation', 'table_engine', 'table_collation', 'missing_index', 'extra_index', 'counts'] as $schemaLabel) {
+    $schemaLabels[$schemaLabel] = $lang->get('health_schema_' . $schemaLabel);
+}
+echo json_encode($schemaLabels, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+?>;
+
 
 var TP_HEALTH_L10N = {
     status_ok: "<?php echo addslashes($lang->get('health_status_ok')); ?>",
@@ -306,6 +316,7 @@ var TP_HEALTH_L10N = {
 };
 
 $(document).ready(function() {
+    $('#health-schema-check').on('click', tpCheckDatabaseSchema);
     if (window.location.hash === '#health-file-integrity') {
         $('#tab-health-file-integrity').tab('show');
     }
@@ -1314,6 +1325,76 @@ function tpRenderSystem(report) {
             );
         });
     }
+}
+
+function tpSchemaValue(value) {
+    if (value === null || typeof value !== 'object') {
+        return value === null ? 'NULL / —' : JSON.stringify(value);
+    }
+    if (Array.isArray(value.columns)) {
+        return (value.unique ? 'UNIQUE ' : '') + value.type + ' (' + value.columns.map(function(column) {
+            return column.name + (column.prefix == null ? '' : '(' + column.prefix + ')') + (column.direction === 'D' ? ' DESC' : '');
+        }).join(', ') + ')';
+    }
+    if (value.type) {
+        return value.type + (value.nullable ? ' NULL' : ' NOT NULL') + ' DEFAULT ' + JSON.stringify(value.default) +
+            (value.extra ? ' ' + value.extra : '') + (value.collation ? ' COLLATE ' + value.collation : '');
+    }
+    return JSON.stringify(value);
+}
+
+function tpRenderSchemaReport(report) {
+    var status = ['success', 'warning', 'danger'].indexOf(report.status) >= 0 ? report.status : 'unavailable';
+    $('#health-schema-summary').empty().append(
+        $('<span>').addClass('badge badge-' + (status === 'unavailable' ? 'secondary' : status)).text(tpSchemaL10n[status])
+    );
+    if (status !== 'unavailable') {
+        $('#health-schema-summary').append($('<span>').addClass('ml-2').text(tpSchemaL10n.counts
+            .replace('%errors%', (report.counts || {}).danger || 0)
+            .replace('%warnings%', (report.counts || {}).warning || 0)));
+    }
+    var meta = tpSchemaL10n.meta
+        .replace('%version%', report.version || '')
+        .replace('%date%', report.checked_at ? new Date(report.checked_at).toLocaleString() : '')
+        .replace('%expected%', report.expected_tables == null ? '?' : report.expected_tables)
+        .replace('%inspected%', report.inspected_tables == null ? '?' : report.inspected_tables);
+    $('#health-schema-meta').text(meta);
+    var $body = $('#health-schema-issues').empty();
+    (report.issues || []).forEach(function(issue) {
+        var $row = $('<tr>');
+        var severity = issue.severity === 'danger' ? 'danger' : 'warning';
+        $('<td>').append($('<span>').addClass('badge badge-' + severity).text(tpSchemaL10n[severity])).appendTo($row);
+        $('<td>').append($('<code>').text((report.prefix || '') + issue.table)).appendTo($row);
+        $('<td>').text(issue.object || '—').appendTo($row);
+        $('<td>').text(tpSchemaL10n[issue.code] || issue.code).appendTo($row);
+        [issue.expected, issue.actual].forEach(function(value) {
+            $('<td>').addClass('text-break').text(tpSchemaValue(value)).appendTo($row);
+        });
+        $body.append($row);
+    });
+    $('#health-schema-results').prop('hidden', !(report.issues || []).length);
+}
+
+function tpCheckDatabaseSchema() {
+    var $button = $('#health-schema-check').prop('disabled', true);
+    $('#health-schema-summary').text(tpSchemaL10n.running);
+    $('#health-schema-meta').empty();
+    $('#health-schema-results').prop('hidden', true);
+    $.post('sources/utilities.queries.php', {type: 'health_check_database_schema', key: tpHealthKey}, function(data) {
+        try {
+            data = prepareExchangedData(data, 'decode', tpHealthKey);
+            if (!data || data.error || !data.report) {
+                throw new Error('Schema diagnostic unavailable');
+            }
+            tpRenderSchemaReport(data.report);
+        } catch (e) {
+            $('#health-schema-summary').text(tpSchemaL10n.unavailable);
+        }
+    }).fail(function() {
+        $('#health-schema-summary').text(tpSchemaL10n.unavailable);
+    }).always(function() {
+        $button.prop('disabled', false);
+    });
 }
 
 function tpRenderDatabase(report) {
