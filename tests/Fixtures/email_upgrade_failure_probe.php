@@ -69,6 +69,9 @@ final class ConfigManager
     public static function invalidateCache(): void {}
 }
 
+/** API permission migration has separate SQL coverage; this probe injects email failures only. */
+function secureSendApiUpgrade(): void {}
+
 $source = (string) file_get_contents(dirname(__DIR__, 2) . '/public/install/upgrade_run_3.2.4.php');
 $start = variableOffset($source, '$emailUpgradeFailure');
 $db_link = new \stdClass();
