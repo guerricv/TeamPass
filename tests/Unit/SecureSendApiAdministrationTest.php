@@ -106,4 +106,3 @@ final class SecureSendApiAdministrationTest extends TestCase
         self::assertLessThan(strpos($upgrade, '// Save upgrade timestamp'), strpos($upgrade, 'secureSendApiUpgrade();'));
     }
 }
-
