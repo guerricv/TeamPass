@@ -49,6 +49,7 @@ class SecureSendCleanupHandlerTest extends TestCase
         require_once __DIR__ . '/../../app/sources/secure_send_storage.php';
         require_once __DIR__ . '/../../app/sources/secure_send_active.php';
         require_once __DIR__ . '/../../app/sources/secure_send_email.php';
+        require_once __DIR__ . '/../../app/sources/secure_send_creation.php';
         DB::reset();
         $this->log = tempnam(sys_get_temp_dir(), 'tp-cleanup-handler-');
         $this->previousLog = (string) ini_get('error_log');
@@ -72,7 +73,7 @@ class SecureSendCleanupHandlerTest extends TestCase
         $handler = substr($source, $case, $next - $case);
         // Keep the actual try/catch, encryption/storage or listing, and response.
         // Only the preceding authorization/input setup is outside this fixture.
-        $purge = strpos($handler, 'secureSendPurgeExpiredLinks(');
+        $purge = strpos($handler, $action === 'generate_OTV_url' ? 'secureSendPrepareCreation(' : 'secureSendPurgeExpiredLinks(');
         self::assertIsInt($purge);
         $cleanup = strrpos(substr($handler, 0, $purge), '        try {');
         self::assertIsInt($cleanup);
@@ -86,7 +87,7 @@ class SecureSendCleanupHandlerTest extends TestCase
         $lang = new class {
             public function get(string $key): string { return $key; }
         };
-        $dataReceived = [];
+        $dataReceived = ['send_type' => 'note', 'payload' => ['secret' => 'new-secret']];
         $secureSendPlaintext = json_encode(['secret' => 'new-secret']);
         $secureSendPassphrase = '';
         $secureSendLimits = ['time_limit' => time() + 3600, 'views' => 1];

@@ -387,7 +387,7 @@ final class SecureSendEmailTest extends TestCase
     /** Run the real creation handler after its existing page/session authorization gate. */
     private function dispatch(array $payload, string $key = 'session-key'): array
     {
-        require_once __DIR__ . '/../../app/sources/secure_send_input.php';
+        require_once __DIR__ . '/../../app/sources/secure_send_creation.php';
         $source = file_get_contents(__DIR__ . '/../../app/sources/items.queries.php');
         $start = strpos($source, "case 'generate_OTV_url':");
         $end = strpos($source, "case 'count_secure_sends':", $start);

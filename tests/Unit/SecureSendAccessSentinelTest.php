@@ -52,8 +52,9 @@ class SecureSendAccessSentinelTest extends TestCase
         $start = strpos($sender, "case 'generate_OTV_url':");
         $end = strpos($sender, "case 'list_secure_sends':", $start);
         $create = substr($sender, $start, $end - $start);
-        self::assertLessThan(strpos($create, 'secureSendItemPassword('), strpos($create, 'secureSendReadItem('));
-        self::assertLessThan(strpos($create, 'secureSendStoreLink('), strpos($create, 'secureSendItemPassword('));
+        $preparation = (string) file_get_contents(__DIR__ . '/../../app/sources/secure_send_creation.php');
+        self::assertLessThan(strpos($preparation, 'secureSendItemPassword('), strpos($preparation, 'secureSendReadItem('));
+        self::assertLessThan(strpos($create, 'secureSendStoreLink('), strpos($create, 'secureSendPrepareCreation('));
         self::assertStringContainsString("catch (InvalidArgumentException \$e)", $create);
         self::assertStringContainsString("'cannot_decrypt'", $create);
         self::assertStringContainsString("secureSendActiveLinks(\$SETTINGS, (int) \$session->get('user-id'),", $sender);
