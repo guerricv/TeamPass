@@ -34,6 +34,7 @@ class OpenApiContractTest extends TestCase
         'misc' => 'MiscController.php',
         'webauthn' => 'WebauthnController.php',
         'devicePairing' => 'DevicePairingController.php',
+        'secureSend' => 'SecureSendController.php',
     ];
 
     private static ?array $spec = null;
@@ -225,6 +226,25 @@ class OpenApiContractTest extends TestCase
             __DIR__ . '/../../..' . self::CONTROLLER_DIR . '/FolderController.php'
         );
         self::assertStringContainsString('$intSuccessStatus = 201;', $folderController);
+    }
+
+    /** Secure Send exposes its secret URL once and documents a distinct metadata-only replay. */
+    public function testSecureSendContractKeepsReplayAndInventoryFreeOfSecrets(): void
+    {
+        $spec = $this->getSpec();
+        $create = $spec['paths']['/secureSend/create']['post'];
+        self::assertSame('#/components/schemas/SecureSendCreated',
+            $create['responses']['201']['content']['application/json']['schema']['$ref']);
+        self::assertSame('#/components/schemas/SecureSendCreationMetadata',
+            $create['responses']['200']['content']['application/json']['schema']['$ref']);
+        self::assertArrayHasKey('Idempotency-Replayed', $create['responses']['200']['headers']);
+        foreach (['SecureSendMetadata', 'SecureSendCreationMetadata'] as $name) {
+            foreach (['url', 'key', 'code', 'passphrase', 'payload', 'encrypted', 'protected_key'] as $field) {
+                self::assertArrayNotHasKey($field, $spec['components']['schemas'][$name]['properties']);
+            }
+        }
+        self::assertArrayHasKey('X-Total-Count', $spec['paths']['/secureSend/list']['get']['responses']['200']['headers']);
+        self::assertArrayHasKey('404', $spec['paths']['/secureSend/revoke']['delete']['responses']);
     }
 
     public function testServerVersionFieldsMatchRuntimeResponses(): void

@@ -25,6 +25,409 @@
         }
     ],
     "paths": {
+        "/secureSend/create": {
+            "post": {
+                "operationId": "secureSendCreate",
+                "summary": "Create a Secure Send snapshot or independent note",
+                "description": "Requires allowed_to_create; item snapshots additionally require allowed_to_read and current source access, with no administrator bypass. Uses the web policy, encryption and audit helpers. JSON body only; no query parameters, recipient_email or caller-provided URLs. An optional Idempotency-Key suppresses duplicates, scoped to the user and secureSend.create. Replays return 200 and original creation metadata only, without a URL; no secret link is persisted for replay. The link, creation audit and idempotency completion commit together. The replay window follows offline_sync_window_days (90 days by default, 0 unlimited). Reusing a key with a different normalized intent returns 409; a live processing lease returns 409 with Retry-After. Without a key, retries can create duplicate sends. All responses use Cache-Control: no-store.",
+                "parameters": [
+                    {
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[\\x21-\\x7E]+$"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SecureSendCreateBody"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Created; this is the only response containing the full URL.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SecureSendCreated"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Idempotent replay; original creation metadata only, even if the original send was later revoked or exhausted.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SecureSendCreationMetadata"
+                                }
+                            }
+                        },
+                        "headers": {
+                            "Idempotency-Replayed": {
+                                "schema": {
+                                    "type": "boolean",
+                                    "const": true
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid JSON, transport, query parameters or Idempotency-Key.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, invalid, revoked or expired API session.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "API grant missing, Secure Send/notes disabled, or source access denied.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Key reused for a different intent, or another request is processing it.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        },
+                        "headers": {
+                            "Retry-After": {
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid payload, required passphrase missing, source cannot be decrypted, unusable TOTP, or invalid configured sharing address.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "405": {
+                        "description": "Only POST is supported.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        },
+                        "headers": {
+                            "Allow": {
+                                "schema": {
+                                    "type": "string",
+                                    "const": "POST"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "description": "Storage, audit or encryption failure.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Global API disabled.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/secureSend/list": {
+            "get": {
+                "operationId": "secureSendList",
+                "summary": "List the authenticated sender's active Secure Send metadata",
+                "description": "Requires allowed_to_read. Same inventory as My secure sends: unexpired, non-exhausted sends with current source access; includes notes or unprotected sends suspended by current policy. API returns no labels, contents, lookup codes, URLs or secrets. Empty or globally disabled Secure Send inventory is []. Pagination is applied after current access filtering; all responses use Cache-Control: no-store.",
+                "parameters": [
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "default": 50,
+                            "minimum": 1,
+                            "maximum": 500
+                        }
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "default": 0,
+                            "minimum": 0
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Owned inventory, newest first.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/SecureSendMetadata"
+                                    }
+                                }
+                            }
+                        },
+                        "headers": {
+                            "X-Total-Count": {
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid pagination.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid session.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Read grant missing.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "405": {
+                        "description": "Only GET is supported.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        },
+                        "headers": {
+                            "Allow": {
+                                "schema": {
+                                    "type": "string",
+                                    "const": "GET"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "description": "Inventory unavailable.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Global API disabled.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/secureSend/revoke": {
+            "delete": {
+                "operationId": "secureSendRevoke",
+                "summary": "Revoke an owned Secure Send",
+                "description": "Requires allowed_to_delete. Ownership is derived from the authenticated session and rechecked under a row lock, never from URL credentials. Works when Secure Send/notes are disabled or source access was lost. Unknown, already revoked and foreign sends all return 404. A repeated DELETE cannot duplicate the revocation audit. Global API must remain enabled. All responses use Cache-Control: no-store.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Revoked atomically with its audit event.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "id",
+                                        "revoked"
+                                    ],
+                                    "properties": {
+                                        "id": {
+                                            "type": "integer"
+                                        },
+                                        "revoked": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing/invalid id.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid session.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Delete grant missing.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Secure Send not found.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "405": {
+                        "description": "Only DELETE is supported.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        },
+                        "headers": {
+                            "Allow": {
+                                "schema": {
+                                    "type": "string",
+                                    "const": "DELETE"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/RateLimited"
+                    },
+                    "500": {
+                        "description": "Revocation or audit failed.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Global API disabled.",
+                        "content": {
+                            "application/problem+json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Problem"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/authorize": {
             "post": {
                 "operationId": "authorize",
@@ -1762,6 +2165,265 @@
             }
         },
         "schemas": {
+            "SecureSendCreateBody": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                            "send_type",
+                            "item_id"
+                        ],
+                        "properties": {
+                            "send_type": {
+                                "const": "item"
+                            },
+                            "days": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "Defaults to the administrator expiration period; clamped to its current maximum."
+                            },
+                            "views": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "default": 1,
+                                "description": "Clamped to secure_send_max_views."
+                            },
+                            "passphrase": {
+                                "type": "string",
+                                "writeOnly": true,
+                                "description": "Maximum 1024 UTF-8 bytes. Whitespace is preserved. Required when administrator policy mandates it."
+                            },
+                            "public": {
+                                "type": "boolean",
+                                "default": false,
+                                "description": "Use the administrator-configured public sharing address; callers cannot supply a URL."
+                            },
+                            "item_id": {
+                                "type": "integer",
+                                "minimum": 1
+                            },
+                            "include_totp": {
+                                "type": "boolean",
+                                "default": false,
+                                "description": "Opt in to copying the enabled TOTP profile. Ignored for a current read-only account, as on the web."
+                            }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                            "send_type",
+                            "payload"
+                        ],
+                        "properties": {
+                            "send_type": {
+                                "const": "note"
+                            },
+                            "days": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "Defaults to the administrator expiration period; clamped to its current maximum."
+                            },
+                            "views": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "default": 1,
+                                "description": "Clamped to secure_send_max_views."
+                            },
+                            "passphrase": {
+                                "type": "string",
+                                "writeOnly": true,
+                                "description": "Maximum 1024 UTF-8 bytes. Whitespace is preserved. Required when administrator policy mandates it."
+                            },
+                            "public": {
+                                "type": "boolean",
+                                "default": false,
+                                "description": "Use the administrator-configured public sharing address; callers cannot supply a URL."
+                            },
+                            "payload": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "title": {
+                                        "type": "string",
+                                        "default": ""
+                                    },
+                                    "secret": {
+                                        "type": "string",
+                                        "default": ""
+                                    },
+                                    "note": {
+                                        "type": "string",
+                                        "default": ""
+                                    },
+                                    "login": {
+                                        "type": "string",
+                                        "default": ""
+                                    },
+                                    "url": {
+                                        "type": "string",
+                                        "default": ""
+                                    }
+                                },
+                                "description": "At least secret or note must contain non-whitespace text. Secrets and note text retain their whitespace."
+                            }
+                        }
+                    }
+                ]
+            },
+            "SecureSendCreationMetadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "id",
+                    "send_type",
+                    "item_id",
+                    "has_passphrase",
+                    "expires_at",
+                    "max_views",
+                    "public",
+                    "description_truncated"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "send_type": {
+                        "type": "string",
+                        "enum": [
+                            "item",
+                            "note"
+                        ]
+                    },
+                    "item_id": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "has_passphrase": {
+                        "type": "boolean"
+                    },
+                    "expires_at": {
+                        "type": "integer",
+                        "description": "Unix UTC timestamp in seconds."
+                    },
+                    "max_views": {
+                        "type": "integer"
+                    },
+                    "public": {
+                        "type": "boolean"
+                    },
+                    "description_truncated": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "SecureSendCreated": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "id",
+                    "send_type",
+                    "item_id",
+                    "has_passphrase",
+                    "expires_at",
+                    "max_views",
+                    "public",
+                    "description_truncated",
+                    "url"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "send_type": {
+                        "type": "string",
+                        "enum": [
+                            "item",
+                            "note"
+                        ]
+                    },
+                    "item_id": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "has_passphrase": {
+                        "type": "boolean"
+                    },
+                    "expires_at": {
+                        "type": "integer",
+                        "description": "Unix UTC timestamp in seconds."
+                    },
+                    "max_views": {
+                        "type": "integer"
+                    },
+                    "public": {
+                        "type": "boolean"
+                    },
+                    "description_truncated": {
+                        "type": "boolean"
+                    },
+                    "url": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Secret-bearing link, returned only in the original 201 response. Never logged or replayed."
+                    }
+                }
+            },
+            "SecureSendMetadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "id",
+                    "send_type",
+                    "item_id",
+                    "has_passphrase",
+                    "expires_at",
+                    "max_views",
+                    "suspended",
+                    "remaining_views"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "send_type": {
+                        "type": "string",
+                        "enum": [
+                            "item",
+                            "note"
+                        ]
+                    },
+                    "item_id": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "has_passphrase": {
+                        "type": "boolean"
+                    },
+                    "expires_at": {
+                        "type": "integer",
+                        "description": "Unix UTC timestamp in seconds."
+                    },
+                    "max_views": {
+                        "type": "integer"
+                    },
+                    "suspended": {
+                        "type": "boolean"
+                    },
+                    "remaining_views": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                }
+            },
             "Problem": {
                 "type": "object",
                 "description": "RFC 9457 problem details; the legacy 'error' member duplicates 'detail' for backward compatibility.",

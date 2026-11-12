@@ -1604,3 +1604,8 @@ Production [1]
 - A `429` answer is retried once, honouring the `Retry-After` header.
 - The configuration file holds credentials in clear text: keep it at `chmod 600` (Bash) or restrict its NTFS permissions to the current user (PowerShell).
 - On Windows, an execution policy may block the script. Run it in the current session with `powershell -ExecutionPolicy Bypass -File .\app\scripts\teampass-cli.ps1 <command>`, or unblock the file with `Unblock-File .\app\scripts\teampass-cli.ps1`.
+
+## Secure Send
+
+See [Secure Send API](secure-send.md) for encrypted item snapshots, independent
+notes, owner-scoped metadata/revocation and metadata-only idempotent retries.
