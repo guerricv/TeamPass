@@ -29,6 +29,7 @@ class ApiIdempotencyModel
 {
     public const OPERATION_ITEM_CREATE = 'item.create';
     public const OPERATION_ITEM_DELETE = 'item.delete';
+    public const OPERATION_SECURE_SEND_CREATE = 'secureSend.create';
     public const MAX_KEY_LENGTH = 128;
     public const PROCESSING_LEASE_SECONDS = 300;
 
@@ -114,7 +115,7 @@ class ApiIdempotencyModel
      */
     public function reserve(int $userId, string $operation, string $key, array $intent): array
     {
-        if ($userId <= 0 || in_array($operation, [self::OPERATION_ITEM_CREATE, self::OPERATION_ITEM_DELETE], true) === false) {
+        if ($userId <= 0 || in_array($operation, [self::OPERATION_ITEM_CREATE, self::OPERATION_ITEM_DELETE, self::OPERATION_SECURE_SEND_CREATE], true) === false) {
             throw new InvalidArgumentException('Invalid idempotency scope.');
         }
 

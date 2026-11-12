@@ -33,6 +33,8 @@ final class DB
             };
         }, $sql);
         $result = self::$connection->query($sql);
+        // Fetching a columnless result can execute an UPDATE a second time in SQLite3.
+        if ($result->numColumns() === 0) { return []; }
         $rows = [];
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) { $rows[] = $row; }
         return $rows;
@@ -70,6 +72,8 @@ final class DB
 
     /** Return the actual auto-generated identifier. */
     public static function insertId(): int { return self::$connection->lastInsertRowID(); }
+    /** Report guarded UPDATE ownership through the real SQL connection. */
+    public static function affectedRows(): int { return self::$connection->changes(); }
     /** Apply production failure metadata to the actual synthetic SQL row. */
     public static function update(string $table, array $values, string $where, mixed ...$parameters): void
     {

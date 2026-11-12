@@ -40,10 +40,18 @@ require_once __DIR__ . '/secure_send_audit.php';
  * @param array $link Validated link with encrypted payload
  * @param array $settings Application settings
  * @param array|null $delivery Server-built URL and single recipient, or null for clipboard sharing
+ * @param callable|null $beforeInsert Optional transaction participant, called before insertion
+ * @param callable|null $afterInsert Optional transaction participant receiving the new link id
  * @return int New link identifier
  * @throws Throwable When the link or audit cannot be persisted
  */
-function secureSendStoreLink(array $link, array $settings, ?array $delivery = null): int
+function secureSendStoreLink(
+    array $link,
+    array $settings,
+    ?array $delivery = null,
+    ?callable $beforeInsert = null,
+    ?callable $afterInsert = null
+): int
 {
     $message = null;
     if ($delivery !== null) {
@@ -52,6 +60,9 @@ function secureSendStoreLink(array $link, array $settings, ?array $delivery = nu
     }
     DB::startTransaction();
     try {
+        if ($beforeInsert !== null) {
+            $beforeInsert();
+        }
         if ($message !== null) {
             secureSendEmailReserve((int) $link['originator'], time());
         }
@@ -61,6 +72,9 @@ function secureSendStoreLink(array $link, array $settings, ?array $delivery = nu
         $event = secureSendAudit($link, 'created', '', (int) $link['originator']);
         if ($message !== null) {
             secureSendEmailQueue($message, $link, $settings, time());
+        }
+        if ($afterInsert !== null) {
+            $afterInsert($id);
         }
         DB::commit();
     } catch (Throwable $e) {

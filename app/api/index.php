@@ -376,6 +376,14 @@ if (($uri[0] ?? '') === 'devicePairing') {
             $userData['data']
         ); 
 
+    // Secure Send uses explicit actions and its own API grant mapping.
+    } elseif ($controller === 'secureSend' && count($uri) === 2
+        && in_array($action, ['create', 'list', 'revoke'], true)
+    ) {
+        require API_ROOT_PATH . '/Controller/Api/SecureSendController.php';
+        $secureSendController = new SecureSendController();
+        $secureSendController->{$action . 'Action'}($userData['data']);
+
     // action related to FOLDER
     } elseif ($controller === 'folder') {
         // Manage requested action
