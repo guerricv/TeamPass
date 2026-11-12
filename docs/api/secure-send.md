@@ -17,6 +17,20 @@ machine-readable contract is available at `/api/v1/openapi.json`.
 | `GET /api/v1/secureSend/list` | `allowed_to_read` | List the current user's active metadata |
 | `DELETE /api/v1/secureSend/revoke?id=123` | `allowed_to_delete` | Revoke the current user's send |
 
+Creation also requires two explicit administrator opt-ins, both **off by default**:
+enable **Allow Secure Send creation through the API** on the administration API
+page (`api_secure_send_enabled`), then enable **Secure Send** for each authorized
+user in its access table (`api.allowed_to_secure_send`). These permissions supplement
+the API grants above and the existing Secure Send policy; they grant no extra item
+access. They apply equally to browser-extension, mobile, password and PAT API sessions.
+
+The server reads both permissions from current storage on every creation, including
+idempotent retries; a stale JWT or configuration cache cannot preserve a revoked
+sharing permission. Removing either permission immediately blocks new API creations
+with `403`. Existing recipient links retain their normal lifecycle, and owner-scoped
+listing/revocation remain available with their existing API grants. The web and its
+email invitations continue to use their own existing policy.
+
 All responses use `Cache-Control: no-store`. Errors use the API's
 `application/problem+json` envelope. Unsupported methods return `405` with `Allow`.
 Never log request bodies, Authorization headers or the secret-bearing creation URL.
@@ -164,10 +178,14 @@ authorization.
 
 ## Deployment and validation
 
-No new setting, table, dependency or client change is required. Use the normal
-TeamPass installation/upgrade procedure so the existing `otv`, `secure_send_audit`
-and `api_idempotency` schemas are present. Do not provision real installation
-secrets just to run tests.
+Run the normal installation/upgrade procedure. Fresh installation and the 3.2.4
+migration add `api_secure_send_enabled = 0` and the `api.allowed_to_secure_send`
+column, defaulting to `0` for existing and new users. Replaying the migration
+preserves all administrator choices. No new table, dependency or client change
+is required. Before the grant column exists, API creation is denied and the
+administration page requests an upgrade; other API endpoints and send management
+keep working. The existing `otv`, `secure_send_audit` and `api_idempotency` schemas
+are also required. Do not provision real installation secrets just to run tests.
 
 Regression coverage: `tests/Unit/Api/ApiSecureSendTest.php` exercises real SQL
 transactions in SQLite and Defuse encryption, per-token AES key unwrapping,

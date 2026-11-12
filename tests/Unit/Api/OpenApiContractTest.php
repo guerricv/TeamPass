@@ -233,6 +233,9 @@ class OpenApiContractTest extends TestCase
     {
         $spec = $this->getSpec();
         $create = $spec['paths']['/secureSend/create']['post'];
+        self::assertStringContainsString('api_secure_send_enabled', $create['description']);
+        self::assertStringContainsString('allowed_to_secure_send', $create['description']);
+        self::assertStringContainsString('off by default', $create['description']);
         self::assertSame('#/components/schemas/SecureSendCreated',
             $create['responses']['201']['content']['application/json']['schema']['$ref']);
         self::assertSame('#/components/schemas/SecureSendCreationMetadata',

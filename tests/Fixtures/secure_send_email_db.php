@@ -18,10 +18,18 @@ final class DB
     public static bool $inTransaction = false;
     public static int $wakeups = 0;
     public static string $instanceKey;
+    public static int $lastCount = 0;
 
     /** Bind the MeekroDB placeholders used by these helpers; adapt row locks for SQLite only. */
     public static function query(string $sql, mixed ...$parameters): array
     {
+        if (preg_match('/^SHOW COLUMNS FROM (\w+) LIKE %s$/', $sql, $match)) {
+            return array_map(static fn ($column) => ['Field' => $column['name']], array_values(array_filter(
+                self::query('PRAGMA table_info(' . $match[1] . ')'),
+                static fn ($column) => $column['name'] === $parameters[0]
+            )));
+        }
+        $sql = str_replace('INSERT IGNORE', 'INSERT OR IGNORE', $sql);
         $sql = str_replace(' FOR UPDATE', '', $sql);
         $index = 0;
         $sql = preg_replace_callback('/%li|%i|%s/', static function ($match) use ($parameters, &$index): string {
@@ -37,6 +45,7 @@ final class DB
         if ($result->numColumns() === 0) { return []; }
         $rows = [];
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) { $rows[] = $row; }
+        self::$lastCount = count($rows);
         return $rows;
     }
 
@@ -74,6 +83,10 @@ final class DB
     public static function insertId(): int { return self::$connection->lastInsertRowID(); }
     /** Report guarded UPDATE ownership through the real SQL connection. */
     public static function affectedRows(): int { return self::$connection->changes(); }
+    /** Match the administration handlers' immediate SELECT row-count contract. */
+    public static function count(): int { return self::$lastCount; }
+    /** The fixture never enables SQL debug output. */
+    public static function debugMode(bool $enabled): void {}
     /** Apply production failure metadata to the actual synthetic SQL row. */
     public static function update(string $table, array $values, string $where, mixed ...$parameters): void
     {
@@ -124,7 +137,10 @@ function defuse_validate_personal_key(string $password, string $protected): stri
     return \Defuse\Crypto\KeyProtectedByPassword::loadFromAsciiSafeString($protected)->unlockKey($password)->saveToAsciiSafeString();
 }
 /** The exchange transport is outside the authenticated handler's business decisions. */
-function prepareExchangedData(string $data, string $direction): array { return json_decode($data, true, 512, JSON_THROW_ON_ERROR); }
+function prepareExchangedData(array|string $data, string $direction): array|string
+{
+    return $direction === 'encode' ? json_encode($data, JSON_THROW_ON_ERROR) : json_decode($data, true, 512, JSON_THROW_ON_ERROR);
+}
 
 // Exercise the actual catalog/subject resolver without starting an installed application.
 $source = str_replace("\r\n", "\n", file_get_contents(__DIR__ . '/../../app/sources/main.functions.php'));

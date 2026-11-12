@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../sources/secure_send_creation.php';
 require_once __DIR__ . '/../../sources/secure_send_active.php';
+require_once __DIR__ . '/../../sources/secure_send_api_permissions.php';
 require_once __DIR__ . '/ApiIdempotencyModel.php';
 
 /** API adapter for the shared Secure Send business logic. */
@@ -92,7 +93,9 @@ class SecureSendModel
      */
     public function create(array $input, array $user, array $settings, ?string $key = null): array
     {
-        if (!$this->isAllowed($user, 'create', $input['send_type'])) {
+        if (!$this->isAllowed($user, 'create', $input['send_type'])
+            || !secureSendApiCanCreate((int) $user['id'])
+        ) {
             throw new InvalidArgumentException('not_allowed');
         }
         $keys = ['private_key' => '', 'public_key' => ''];

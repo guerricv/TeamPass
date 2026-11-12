@@ -1519,6 +1519,19 @@ switch ($post_type) {
             break;
         }
 
+        if (($dataReceived['field'] ?? null) === 'api_secure_send_enabled') {
+            require_once __DIR__ . '/secure_send_api_permissions.php';
+            try {
+                if ((int) $session->get('user-admin') !== 1 || !secureSendApiSchemaReady()) {
+                    throw new InvalidArgumentException('not_allowed');
+                }
+                $dataReceived['value'] = (string) secureSendApiToggleValue($dataReceived['value'] ?? null);
+            } catch (InvalidArgumentException $e) {
+                echo prepareExchangedData(['error' => true, 'message' => $lang->get('error_not_allowed_to')], 'encode');
+                break;
+            }
+        }
+
         // Diagnostics are independent of the transport revision and OAuth consent.
         if (($dataReceived['field'] ?? null) === 'email_debug_level'
             && !in_array($dataReceived['value'] ?? null, ['0', '1', '2', '3', '4', 0, 1, 2, 3, 4], true)
@@ -3110,7 +3123,7 @@ case 'save_sending_statistics':
         // SECURITY (GHSA-x8jf-9g87-j232): the column name comes from the request, so restrict it to
         // the toggle fields exposed by the API users table. This page is admin-only, but the
         // allow-list prevents any arbitrary column from being written into the api table.
-        $writableApiFields = ['enabled', 'allowed_to_create', 'allowed_to_read', 'allowed_to_update', 'allowed_to_delete'];
+        $writableApiFields = ['enabled', 'allowed_to_create', 'allowed_to_read', 'allowed_to_update', 'allowed_to_delete', 'allowed_to_secure_send'];
         if (in_array($post_field, $writableApiFields, true) === false) {
             echo prepareExchangedData(
                 array(
@@ -3120,6 +3133,19 @@ case 'save_sending_statistics':
                 'encode'
             );
             break;
+        }
+
+        if ($post_field === 'allowed_to_secure_send') {
+            require_once __DIR__ . '/secure_send_api_permissions.php';
+            try {
+                if ((int) $session->get('user-admin') !== 1 || !secureSendApiSchemaReady()) {
+                    throw new InvalidArgumentException('not_allowed');
+                }
+                $post_value = (string) secureSendApiToggleValue($dataReceived['value'] ?? null);
+            } catch (InvalidArgumentException $e) {
+                echo prepareExchangedData(['error' => true, 'message' => $lang->get('error_not_allowed_to')], 'encode');
+                break;
+            }
         }
 
         //update.

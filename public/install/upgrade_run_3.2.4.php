@@ -211,6 +211,19 @@ try {
     $emailUpgradeFailure('Unable to upgrade email transport storage.');
 }
 
+// Secure Send API creation requires explicit instance and per-user consent.
+require_once TEAMPASS_ROOT . '/app/sources/secure_send_api_permissions.php';
+try {
+    secureSendApiUpgrade();
+} catch (Throwable $error) {
+    error_log('Secure Send API migration failure (' . get_class($error) . ')');
+    if (PHP_SAPI === 'cli' && defined('TEAMPASS_RECOVERY_MIGRATION') && TEAMPASS_RECOVERY_MIGRATION === true) {
+        throw $error;
+    }
+    echo json_encode([['finish' => '1', 'error' => 'Unable to upgrade Secure Send API permissions.']]);
+    exit;
+}
+
 // Save upgrade timestamp (upsert: always update if exists)
 mysqli_query(
     $db_link,

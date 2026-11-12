@@ -29,7 +29,7 @@
             "post": {
                 "operationId": "secureSendCreate",
                 "summary": "Create a Secure Send snapshot or independent note",
-                "description": "Requires allowed_to_create; item snapshots additionally require allowed_to_read and current source access, with no administrator bypass. Uses the web policy, encryption and audit helpers. JSON body only; no query parameters, recipient_email or caller-provided URLs. An optional Idempotency-Key suppresses duplicates, scoped to the user and secureSend.create. Replays return 200 and original creation metadata only, without a URL; no secret link is persisted for replay. The link, creation audit and idempotency completion commit together. The replay window follows offline_sync_window_days (90 days by default, 0 unlimited). Reusing a key with a different normalized intent returns 409; a live processing lease returns 409 with Retry-After. Without a key, retries can create duplicate sends. All responses use Cache-Control: no-store.",
+                "description": "Requires allowed_to_create plus both explicit administrator opt-ins: api_secure_send_enabled and the user grant api.allowed_to_secure_send, both off by default. These permissions are read from current storage on every creation and retry; no JWT claim grants sharing. Item snapshots additionally require allowed_to_read and current source access, with no administrator bypass. Disabling either sharing permission blocks creation/replay with 403 while preserving existing links and owner-scoped listing/revocation. Before the grant column is installed, creation fails closed. Uses the web policy, encryption and audit helpers. JSON body only; no query parameters, recipient_email or caller-provided URLs. An optional Idempotency-Key suppresses duplicates, scoped to the user and secureSend.create. Replays return 200 and original creation metadata only, without a URL; no secret link is persisted for replay. The link, creation audit and idempotency completion commit together. The replay window follows offline_sync_window_days (90 days by default, 0 unlimited). Reusing a key with a different normalized intent returns 409; a live processing lease returns 409 with Retry-After. Without a key, retries can create duplicate sends. All responses use Cache-Control: no-store.",
                 "parameters": [
                     {
                         "name": "Idempotency-Key",
@@ -103,7 +103,7 @@
                         }
                     },
                     "403": {
-                        "description": "API grant missing, Secure Send/notes disabled, or source access denied.",
+                        "description": "API grant or explicit instance/user sharing permission missing, Secure Send/notes disabled, upgrade required, or source access denied.",
                         "content": {
                             "application/problem+json": {
                                 "schema": {

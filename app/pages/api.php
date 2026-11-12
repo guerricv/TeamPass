@@ -39,6 +39,7 @@ use TeampassClasses\ConfigManager\ConfigManager;
 // Load functions
 require_once __DIR__.'/../sources/main.functions.php';
 require_once __DIR__ . '/../sources/api_device_logic.php';
+require_once __DIR__ . '/../sources/secure_send_api_permissions.php';
 
 // init
 loadClasses('DB');
@@ -90,6 +91,7 @@ $browserFqdn = getDomainFromSettingsUrl($SETTINGS['cpassman_url'] ?? '');
 // The extension key can only be generated once - regenerating it would break every
 // extension already configured with it.
 $browserExtensionKey = (string) ($SETTINGS['browser_extension_key'] ?? '');
+$secureSendApiReady = secureSendApiSchemaReady();
 
 // Licence identity, shown read-only in the Licence tab. A trial is granted once per FQDN and
 // per product, forever, so an unusable FQDN is reported before anything can be requested.
@@ -230,6 +232,21 @@ function getDomainFromSettingsUrl(string $url): string
                             </div>
                         </div>
 
+                        <div class="row mb-3">
+                            <div class="col-10">
+                                <?php echo htmlspecialchars($lang->get('api_secure_send_enabled'), ENT_QUOTES, 'UTF-8'); ?>
+                                <small class="form-text text-muted"><?php echo htmlspecialchars($lang->get('api_secure_send_enabled_tip'), ENT_QUOTES, 'UTF-8'); ?></small>
+                            </div>
+                            <div class="col-2">
+                                <?php if ($secureSendApiReady) : ?>
+                                <div class="toggle toggle-modern" id="api_secure_send_enabled" data-toggle-on="<?php echo (int) ($SETTINGS['api_secure_send_enabled'] ?? 0) === 1 ? 'true' : 'false'; ?>"></div>
+                                <input type="hidden" id="api_secure_send_enabled_input" value="<?php echo (int) ($SETTINGS['api_secure_send_enabled'] ?? 0) === 1 ? '1' : '0'; ?>">
+                                <?php else : ?>
+                                <small class="text-warning"><?php echo htmlspecialchars($lang->get('api_secure_send_upgrade_required'), ENT_QUOTES, 'UTF-8'); ?></small>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
                         <ul class="nav nav-tabs">
                             <li class="nav-item">
                                 <a class="nav-link active" data-toggle="tab" href="#users" role="tab" aria-controls="users"><?php echo $lang->get('users'); ?></a>
@@ -295,19 +312,27 @@ function getDomainFromSettingsUrl(string $url): string
                                                 <th><i class="fa-solid fa-glasses infotip" title="<?php echo $lang->get('allowed_to_read'); ?>"></i></th>
                                                 <th><i class="fa-solid fa-pencil infotip" title="<?php echo $lang->get('allowed_to_update'); ?>"></i></th>
                                                 <th><i class="fa-solid fa-trash infotip" title="<?php echo $lang->get('allowed_to_delete'); ?>"></i></th>
+                                                <th><span class="infotip" title="<?php echo htmlspecialchars($lang->get('api_secure_send_permission_tip'), ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($lang->get('api_secure_send_permission'), ENT_QUOTES, 'UTF-8'); ?></span></th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             <?php
+                                            $apiIdentityText = static fn (mixed $value): string => htmlspecialchars(
+                                                html_entity_decode((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+                                                ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'
+                                            );
                                             foreach ($rowsKeys as $key) {
                                                 echo '
                                                     <tr data-id="' . strval($key['increment_id']) . '">
-                                                    <td>' . strval($key['name']) . ' ' . strval($key['lastname']) . ' (<i>'.strval($key['login']).'</i>)</td>
+                                                    <td>' . $apiIdentityText($key['name']) . ' ' . $apiIdentityText($key['lastname']) . ' (<i>' . $apiIdentityText($key['login']) . '</i>)</td>
                                                     <td><i class="fas '.(intval($key['enabled']) === 1 ? 'fa-toggle-on text-info' : 'fa-toggle-off').' mr-1 text-center pointer api-clickme-action" data-field="enabled" data-increment-id="' . strval($key['increment_id']) . '"></i></td>
                                                     <td><i class="fas '.(intval($key['allowed_to_create']) === 1 ? 'fa-toggle-on text-info' : 'fa-toggle-off').' mr-1 text-center pointer api-clickme-action" data-field="allowed_to_create" data-increment-id="' . strval($key['increment_id']) . '"></i></td>
                                                     <td><i class="fas '.(intval($key['allowed_to_read']) === 1 ? 'fa-toggle-on text-info' : 'fa-toggle-off').' mr-1 text-center pointer api-clickme-action" data-field="allowed_to_read" data-increment-id="' . strval($key['increment_id']) . '"></i></td>
                                                     <td><i class="fas '.(intval($key['allowed_to_update']) === 1 ? 'fa-toggle-on text-info' : 'fa-toggle-off').' mr-1 text-center pointer api-clickme-action" data-field="allowed_to_update" data-increment-id="' . strval($key['increment_id']) . '"></i></td>
                                                     <td><i class="fas '.(intval($key['allowed_to_delete']) === 1 ? 'fa-toggle-on text-info' : 'fa-toggle-off').' mr-1 text-center pointer api-clickme-action" data-field="allowed_to_delete" data-increment-id="' . strval($key['increment_id']) . '"></i></td>
+                                                    <td>' . ($secureSendApiReady
+                                                        ? '<i class="fas ' . ((int) ($key['allowed_to_secure_send'] ?? 0) === 1 ? 'fa-toggle-on text-info' : 'fa-toggle-off') . ' mr-1 text-center pointer api-clickme-action" data-field="allowed_to_secure_send" data-increment-id="' . (int) $key['increment_id'] . '"></i>'
+                                                        : '<span class="text-muted">&mdash;</span>') . '</td>
                                                 </tr>';
                                             } ?>
                                         </tbody>

@@ -47,10 +47,14 @@ final class ApiSecureSendTest extends TestCase
             'secure_send_audit (record TEXT)',
             'api_idempotency (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, operation TEXT, key_hash TEXT, request_fingerprint TEXT, status TEXT, owner_token_hash TEXT, resource_id INTEGER, http_status INTEGER, response_body TEXT, created_at INTEGER, updated_at INTEGER, locked_until INTEGER, expires_at INTEGER, UNIQUE(user_id, operation, key_hash))',
             'api_sessions (id INTEGER PRIMARY KEY, user_id INTEGER, jti TEXT, key_tempo TEXT, encrypted_private_key TEXT, session_aes_key TEXT, expires_at INTEGER, revoked_at INTEGER, last_used_at INTEGER)',
-            'api (user_id INTEGER, encrypted_private_key TEXT, session_key TEXT, session_aes_key TEXT)',
+            'api (increment_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, type TEXT DEFAULT "user", enabled INTEGER DEFAULT 1, allowed_to_create INTEGER DEFAULT 1, allowed_to_secure_send INTEGER DEFAULT 0, encrypted_private_key TEXT, session_key TEXT, session_aes_key TEXT)',
+            'misc (type TEXT, intitule TEXT, valeur TEXT, UNIQUE(type, intitule))',
         ] as $ddl) { DB::$connection->exec('CREATE TABLE email_test_' . $ddl); }
         DB::insert(prefixTable('users'), ['id' => 42, 'public_key' => 'api-public-canary']);
         DB::insert(prefixTable('users'), ['id' => 43, 'public_key' => 'other-public']);
+        DB::insert(prefixTable('api'), ['user_id' => 42, 'allowed_to_secure_send' => 1]);
+        DB::insert(prefixTable('api'), ['user_id' => 43, 'allowed_to_secure_send' => 1]);
+        DB::insert(prefixTable('misc'), ['type' => 'admin', 'intitule' => 'api_secure_send_enabled', 'valeur' => '1']);
         DB::insert(prefixTable('items'), ['id' => 123, 'id_tree' => 7, 'label' => 'R&amp;D O&#039;Brien &quot;x&quot; &lt;y&gt;',
             'description' => 'snapshot-description', 'login' => 'alice', 'url' => 'https://example.test', 'pw' => 'encrypted', 'pw_len' => 22, 'pw_iv' => '']);
         DB::insert(prefixTable('sharekeys_items'), ['increment_id' => 9, 'object_id' => 123, 'user_id' => 42, 'share_key' => 'wrapped']);
@@ -304,6 +308,79 @@ final class ApiSecureSendTest extends TestCase
             self::assertSame($readOnly === 0, isset($payload['otp_code']));
             self::assertArrayNotHasKey('totp', $payload);
             self::assertStringNotContainsString($seed, json_encode($created));
+        }
+    }
+
+    public function testBothCreationSwitchesDefaultOffAndIgnoreClaimsOrCachedSettings(): void
+    {
+        foreach (['global_off', 'global_absent', 'user_off', 'user_absent'] as $case) {
+            DB::update(prefixTable('misc'), ['valeur' => '1'], 'intitule=%s', 'api_secure_send_enabled');
+            DB::update(prefixTable('api'), ['allowed_to_secure_send' => 1], 'user_id=%i', 42);
+            if ($case === 'global_off') {
+                DB::update(prefixTable('misc'), ['valeur' => '0'], 'intitule=%s', 'api_secure_send_enabled');
+            } elseif ($case === 'global_absent') {
+                DB::delete(prefixTable('misc'), 'intitule=%s', 'api_secure_send_enabled');
+            } elseif ($case === 'user_off') {
+                DB::insert(prefixTable('misc'), ['type' => 'admin', 'intitule' => 'api_secure_send_enabled', 'valeur' => '1']);
+                DB::update(prefixTable('api'), ['allowed_to_secure_send' => 0], 'user_id=%i', 42);
+            } else { DB::delete(prefixTable('api'), 'user_id=%i', 42); }
+            // These plausible stale/client-controlled values must never grant sharing.
+            $this->user['allowed_to_secure_send'] = 1;
+            $this->settings['api_secure_send_enabled'] = 1;
+            $result = $this->dispatch('create', Request::create('/', 'POST', [], [], [],
+                ['CONTENT_TYPE' => 'application/json'], json_encode($this->note())));
+            self::assertSame(403, $result['body']['status'], $case);
+            self::assertSame(0, DB::queryFirstField('SELECT COUNT(*) FROM email_test_otv'));
+            self::assertSame(0, DB::queryFirstField('SELECT COUNT(*) FROM email_test_secure_send_audit'));
+        }
+    }
+
+    public function testPermissionRemovalBlocksReplayButKeepsManagementAndWebCreation(): void
+    {
+        $created = $this->create($this->note(), 'consent-retry');
+        foreach (['user', 'global'] as $gate) {
+            if ($gate === 'user') { DB::update(prefixTable('api'), ['allowed_to_secure_send' => 0], 'user_id=%i', 42); }
+            else {
+                DB::update(prefixTable('api'), ['allowed_to_secure_send' => 1], 'user_id=%i', 42);
+                DB::update(prefixTable('misc'), ['valeur' => '0'], 'intitule=%s', 'api_secure_send_enabled');
+            }
+            try { $this->create($this->note(), 'consent-retry'); self::fail('Sharing was not revoked'); }
+            catch (InvalidArgumentException $e) { self::assertSame('not_allowed', $e->getMessage()); }
+            self::assertSame(1, $this->model->listOwned(42, $this->settings, 50, 0)['total']);
+        }
+        self::assertTrue($this->model->revoke($created['body']['id'], 42, $this->settings));
+        $web = secureSendPrepareCreation(['send_type' => 'note', 'payload' => ['note' => 'web note']], 42, '', '', false, $this->settings);
+        self::assertGreaterThan(0, secureSendStoreLink($web['link'], $this->settings));
+    }
+
+    public function testMissingGrantColumnFailsClosedWithoutBreakingManagement(): void
+    {
+        DB::$connection->exec('ALTER TABLE email_test_api DROP COLUMN allowed_to_secure_send');
+        self::assertFalse(secureSendApiCanCreate(42));
+        self::assertSame([], $this->model->listOwned(42, $this->settings, 50, 0)['sends']);
+        self::assertFalse($this->model->revoke(123, 42, $this->settings));
+    }
+
+    public function testPermissionMigrationIsRepeatableAndPreservesOptIns(): void
+    {
+        DB::$connection->exec('ALTER TABLE email_test_api DROP COLUMN allowed_to_secure_send');
+        DB::delete(prefixTable('misc'), 'intitule=%s', 'api_secure_send_enabled');
+        secureSendApiUpgrade();
+        self::assertSame(0, DB::queryFirstField('SELECT allowed_to_secure_send FROM email_test_api WHERE user_id=42'));
+        self::assertSame('0', DB::queryFirstRow('SELECT valeur FROM email_test_misc')['valeur']);
+        DB::update(prefixTable('api'), ['allowed_to_secure_send' => 1], 'user_id=%i', 42);
+        DB::update(prefixTable('misc'), ['valeur' => '1'], 'intitule=%s', 'api_secure_send_enabled');
+        secureSendApiUpgrade();
+        self::assertTrue(secureSendApiCanCreate(42));
+        self::assertSame(1, DB::queryFirstRow('SELECT COUNT(*) AS total FROM email_test_misc')['total']);
+    }
+
+    public function testPermissionToggleRejectsCoercionAndUnknownValues(): void
+    {
+        foreach ([0, 1, '0', '1'] as $value) { self::assertSame((int) $value, secureSendApiToggleValue($value)); }
+        foreach ([null, false, true, 1.0, '01', 'true', 2, [], '1 OR 1'] as $value) {
+            try { secureSendApiToggleValue($value); self::fail('Invalid permission accepted'); }
+            catch (InvalidArgumentException $e) { self::assertSame('invalid_permission', $e->getMessage()); }
         }
     }
 }
