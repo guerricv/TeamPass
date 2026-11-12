@@ -67,6 +67,13 @@ try {
     (new ReflectionMethod(DatabaseInstaller::class, 'emails'))->invoke($installer);
     (new ReflectionMethod(DatabaseInstaller::class, 'background_tasks'))->invoke($installer);
     (new ReflectionMethod(DatabaseInstaller::class, 'secure_send_email'))->invoke($installer);
+    // The complete 3.2.4 migration also adds Secure Send API sharing permissions.
+    // Model a pre-feature API table, retaining an existing user's unrelated grants.
+    (new ReflectionMethod(DatabaseInstaller::class, 'api'))->invoke($installer);
+    $freshApiSharingGrant = DB::queryFirstRow('SHOW COLUMNS FROM ' . prefixTable('api') . ' LIKE %s', 'allowed_to_secure_send');
+    DB::query('ALTER TABLE ' . prefixTable('api') . ' DROP COLUMN allowed_to_secure_send');
+    DB::insert(prefixTable('api'), ['type' => 'user', 'timestamp' => (string) time(),
+        'user_id' => 42, 'enabled' => 1, 'allowed_to_create' => 1]);
     $freshSharingColumns = DB::query('SHOW COLUMNS FROM ' . prefixTable('secure_send_email'));
     DB::query('DROP TABLE ' . prefixTable('secure_send_email'));
     $freshQueueColumns = DB::query('SHOW COLUMNS FROM ' . prefixTable('background_tasks'));
@@ -97,6 +104,11 @@ try {
     DB::query('INSERT INTO ' . prefixTable('misc') . ' VALUES (%s, %s, %s, 0)', 'admin', 'email_smtp_server', 'relay.example.test');
     DB::query('INSERT INTO ' . prefixTable('misc') . ' VALUES (%s, %s, %s, 0)', 'admin', 'oauth2_client_endpoint', 'https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize');
     emailTokenRunMigration($root, $host, $user, $password, $database, $port, $prefix);
+    emailTokenExpect($freshApiSharingGrant === DB::queryFirstRow('SHOW COLUMNS FROM ' . prefixTable('api') . ' LIKE %s', 'allowed_to_secure_send'), 'Fresh and upgrade API sharing grant schemas differ');
+    emailTokenExpect((int) DB::queryFirstField('SELECT allowed_to_secure_send FROM ' . prefixTable('api') . ' WHERE user_id=%i', 42) === 0, 'Existing API user acquired sharing without opt-in');
+    emailTokenExpect(DB::queryFirstField('SELECT valeur FROM ' . prefixTable('misc') . ' WHERE intitule=%s', 'api_secure_send_enabled') === '0', 'API sharing enabled without instance opt-in');
+    DB::update(prefixTable('api'), ['allowed_to_secure_send' => 1], 'user_id=%i', 42);
+    DB::update(prefixTable('misc'), ['valeur' => '1'], 'intitule=%s', 'api_secure_send_enabled');
     $linkSetting = static fn(): mixed => DB::queryFirstField('SELECT valeur FROM ' . prefixTable('misc') . ' WHERE intitule = %s', 'oauth2_link_existing_accounts');
     emailTokenExpect($freshIdentityShape === $oauth2IdentityShape(), 'Fresh and upgrade OAuth2 identity schemas differ');
     emailTokenExpect($linkSetting() === '1', 'An Entra installation lost the conversion of existing accounts');
@@ -116,6 +128,8 @@ try {
     emailTokenExpect($revision === DB::queryFirstField('SELECT valeur FROM ' . prefixTable('misc') . ' WHERE intitule = %s', 'email_config_revision'), 'Replay changed the revision');
     emailTokenExpect($freshIdentityShape === $oauth2IdentityShape(), 'Replay changed the OAuth2 identity schema');
     emailTokenExpect($linkSetting() === '0', 'Replay overrode the account linking choice');
+    emailTokenExpect((int) DB::queryFirstField('SELECT allowed_to_secure_send FROM ' . prefixTable('api') . ' WHERE user_id=%i', 42) === 1, 'Replay removed the user sharing opt-in');
+    emailTokenExpect(DB::queryFirstField('SELECT valeur FROM ' . prefixTable('misc') . ' WHERE intitule=%s', 'api_secure_send_enabled') === '1', 'Replay removed the instance sharing opt-in');
     // Any provider other than Entra starts with the conversion disabled
     DB::query('DELETE FROM ' . prefixTable('misc') . ' WHERE intitule = %s', 'oauth2_link_existing_accounts');
     DB::query('UPDATE ' . prefixTable('misc') . ' SET valeur = %s WHERE intitule = %s', 'https://authentik.example.test/application/o/authorize/', 'oauth2_client_endpoint');
@@ -191,7 +205,7 @@ try {
     echo "Email token storage and profiles: install, migration, replay, encryption, ownership, rollback and concurrency checks passed.\n";
     echo "OAuth2 identity binding: install, migration, replay and linking default checks passed.\n";
 } finally {
-    foreach (['secure_send_email', 'email_oauth_state', 'emails', 'misc', 'background_tasks', 'users'] as $table) {
+    foreach (['secure_send_email', 'email_oauth_state', 'emails', 'misc', 'background_tasks', 'users', 'api'] as $table) {
         DB::query('DROP TABLE IF EXISTS ' . prefixTable($table));
     }
     DB::disconnect();
